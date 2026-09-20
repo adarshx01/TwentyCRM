@@ -1,0 +1,44 @@
+# Render Blueprint for the outreach worker only.
+# Twenty CRM belongs on Railway (object storage + worker). See docs/09-hosting.md.
+services:
+  - type: keyvalue
+    name: rb-outreach-redis
+    plan: starter
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
+
+  - type: web
+    name: rb-outreach
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./apps/outreach/Dockerfile
+    dockerContext: ./apps/outreach
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: rb-outreach-redis
+          property: connectionString
+      - key: OUTREACH_SEND_ENABLED
+        value: "false"
+      - key: TWENTY_BASE_URL
+        sync: false
+      - key: TWENTY_API_KEY
+        sync: false
+      - key: TWENTY_WEBHOOK_SECRET
+        sync: false
+      - key: OUTREACH_API_TOKEN
+        generateValue: true
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: FROM_EMAIL
+        value: sales@recruitmentbricks.ai
+      - key: FROM_NAME
+        value: Recruitment Bricks
+      - key: RESEND_API_KEY
+        sync: false

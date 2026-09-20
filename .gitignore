@@ -1,0 +1,26 @@
+# env and secrets
+.env
+.env.local
+**/.env
+!**/.env.example
+
+# backups and dumps
+infra/twenty/backups/
+*.sql
+
+# node
+node_modules/
+dist/
+coverage/
+*.log
+npm-debug.log*
+*.tsbuildinfo
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# docker
+.docker/
