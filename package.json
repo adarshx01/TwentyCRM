@@ -1,0 +1,12 @@
+{
+  "name": "rb-sales-os",
+  "private": true,
+  "description": "Repo-root entry so Railway Railpack can build apps/outreach if Docker is not selected.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "npm ci --prefix apps/outreach && npm run build --prefix apps/outreach",
+    "start": "node apps/outreach/dist/main.js"
+  }
+}

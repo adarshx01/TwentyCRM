@@ -32,11 +32,16 @@ Template details that matter:
 
 ### 2. Outreach worker
 
-In the **same Railway project** (so it can reach Redis privately):
+Connecting **this GitHub repo at the project root** is enough. `railway.toml` forces the Docker builder and the root `Dockerfile` compiles `apps/outreach`. (Setting the service Root Directory to `apps/outreach` also works.)
 
-1. New service → GitHub (push this repo) **or** empty service → Dockerfile.
-2. **Root directory:** `apps/outreach` (uses `Dockerfile` + `railway.toml`).
-3. Generate a public domain for outreach.
+This service is the **outreach worker**, not the Twenty UI. Twenty still comes from the template in step 1 — add it as extra services in the same project.
+
+In the **same Railway project** (so outreach can reach Redis privately):
+
+1. New service → GitHub (this repo). Leave Root Directory empty unless you prefer `apps/outreach`.
+2. If the dashboard Builder is stuck on Railpack, set it to **Dockerfile** (or redeploy after this `railway.toml` lands on `main`).
+3. Clear any custom start command such as `start.sh` unless you want `node dist/main.js` overridden.
+4. Generate a public domain for outreach.
 
 Variables:
 
