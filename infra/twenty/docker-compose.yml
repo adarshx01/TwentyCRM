@@ -87,6 +87,39 @@ services:
       retries: 10
     restart: unless-stopped
 
+  outreach:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    ports:
+      - "3100:3100"
+    env_file:
+      - path: ../../apps/outreach/.env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "3100"
+      REDIS_URL: redis://redis:6379/1
+      TWENTY_BASE_URL: http://server:3000
+      OUTREACH_SEND_ENABLED: "false"
+    depends_on:
+      redis:
+        condition: service_healthy
+      server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3100/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
 volumes:
   db-data:
   server-local-data:

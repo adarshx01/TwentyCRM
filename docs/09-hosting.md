@@ -25,6 +25,8 @@ This repo now wraps that image:
 - `infra/twenty/Dockerfile.worker`
 - Local Compose remains `infra/twenty/docker-compose.yml`
 
+Exact paste-ready variables: [infra/railway/variables.env.example](../infra/railway/variables.env.example).
+
 ## Make one working Railway project
 
 Use **clever-compassion** (outreach already builds). Pause or delete **strong-art** so the $5 trial is not spent on a dead template.

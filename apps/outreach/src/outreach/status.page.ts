@@ -24,11 +24,11 @@ export function wiringStatus(): WiringStatus {
 export function statusHtml(): string {
   const s = wiringStatus();
   const redisRow = s.redisLooksLocal
-    ? 'Redis is still 127.0.0.1 inside this container (no Railway Redis variable). Jobs will not run.'
+    ? 'Redis is still 127.0.0.1. In Railway → this service → Variables set REDIS_URL=${{Redis.REDIS_URL}}/1?family=0 (Redis plugin must exist in this same project).'
     : 'Redis URL is not localhost — queue wiring looks set.';
   const twentyRow = s.twentyApiKeyConfigured
     ? `API key is set. Base URL: ${escapeHtml(s.twentyBaseUrl)}`
-    : `No TWENTY_API_KEY. Base URL: ${escapeHtml(s.twentyBaseUrl)} (that is the CRM, not this service).`;
+    : `No TWENTY_API_KEY. Set TWENTY_BASE_URL to the Twenty server public URL (not this outreach URL) and paste TWENTY_API_KEY from Twenty → Settings → APIs. Current base: ${escapeHtml(s.twentyBaseUrl)}`;
 
   return `<!doctype html>
 <html lang="en">

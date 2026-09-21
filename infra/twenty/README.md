@@ -4,6 +4,7 @@ Official image `twentycrm/twenty`, pinned in `.env` (`TAG=v2.39.5`). This folder
 
 ```bash
 ./scripts/up.sh          # generate secrets if needed, compose up, wait for healthz
+# CRM: http://localhost:3000   outreach: http://localhost:3100
 ./scripts/backup.sh      # pg_dump into ./backups/
 docker compose down      # stop
 ```

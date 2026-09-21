@@ -3,8 +3,12 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-startCommand = "node dist/main.js"
+# Do not set startCommand here: other services from this repo (Twenty) must use their own image CMD.
 healthcheckPath = "/health"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5
+
+[environments.production.variables]
+NODE_ENV = "production"
+OUTREACH_SEND_ENABLED = "false"
