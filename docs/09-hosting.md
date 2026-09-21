@@ -1,106 +1,114 @@
-# Hosting (Railway first, Render fallback)
+# Hosting on Railway
 
-This repo is two runtimes: **Twenty CRM** (official Docker image) and the **outreach worker** (this repo’s NestJS app). Do not build Twenty from this git tree.
+You currently have **two disconnected Railway projects**. That is why the browser looks empty and the template “does nothing” for outreach.
 
-Railway is the path that actually matches Twenty’s production shape (Postgres, Redis, a separate worker process, and object storage). Render can run outreach; its older Twenty blueprints are stale and disks cannot be shared between a server and a worker.
+| Project | What it is | Status from your screenshots |
+| --- | --- | --- |
+| **clever-compassion** → service `TwentyCRM` | This GitHub repo = **outreach API only** | Running. `GET /` used to 404. `/health` was 200. Redis = `127.0.0.1` (useless). **0 Variables**. |
+| **strong-art** → Twenty template | Official CRM: redis, postgres, worker, server, storage | Redis/Postgres up. **Server build failed**, so **worker crashed** (it waits for `SERVER_URL/healthz`). Storage bucket empty. |
 
-You still need a Railway or Render account in the browser. There is no CLI login in this workspace, so nothing is live in the cloud until you click deploy.
+Railway does not merge projects. `${{Redis.REDIS_URL}}` only works **inside the same project**. Outreach in clever-compassion cannot see redis in strong-art.
 
-## Railway (recommended)
+## Why `twentycrm-production-7493.up.railway.app` is not a CRM
 
-### 1. Twenty CRM
+That hostname is the Nest app from **this repo**. It has no Twenty React UI. Until the homepage change is deployed, `GET /` is `Cannot GET /` — that JSON **is** our app answering. Open `/health` if the homepage is not on Railway yet.
 
-Deploy the v2 template (server, worker, PostgreSQL 16, Redis with `noeviction`, object storage):
+Twenty’s UI is whatever domain is on the **server** service (`server-production-….up.railway.app` in the template). That service never came up in strong-art.
 
-[https://railway.com/deploy/twenty-crm-v2-railway](https://railway.com/deploy/twenty-crm-v2-railway)
+## Why Twenty is not “inside” this git repo as source
 
-After it is healthy:
+[twentyhq/twenty](https://github.com/twentyhq/twenty) is a huge Nx monorepo. We **consume** the published image `twentycrm/twenty` (same as [self-host Docker Compose](https://docs.twenty.com/developers/self-host/capabilities/docker-compose)). Forking it would mean you maintain CRM upgrades. Outreach (research + draft email) stays our Nest service.
 
-1. Open the **server** public URL and create the Recruitment Bricks workspace.
-2. Settings → APIs & Webhooks → create an API key (and optionally a webhook).
-3. Pin **server** and **worker** to the same image tag you use locally (`twentycrm/twenty:v2.39.5`) if the template shipped a different version. Change both together; never leave them split.
-4. Copy `ENCRYPTION_KEY` somewhere durable. Rotating it without Twenty’s procedure locks you out of encrypted fields.
+This repo now wraps that image:
 
-Template details that matter:
+- `infra/twenty/Dockerfile.server`
+- `infra/twenty/Dockerfile.worker`
+- Local Compose remains `infra/twenty/docker-compose.yml`
 
-| Variable | Why |
-| --- | --- |
-| `NODE_PORT` / `PORT` | Both `3000`. Twenty listens on `NODE_PORT`, not Railway’s default `PORT`. |
-| `SERVER_URL` | `https://${{server.RAILWAY_PUBLIC_DOMAIN}}` |
-| `REDIS_URL` | Must include `?family=0` for Railway private DNS. |
-| `STORAGE_TYPE` | `S_3` (Railway services cannot share a volume). |
+## Make one working Railway project
 
-### 2. Outreach worker
+Use **clever-compassion** (outreach already builds). Pause or delete **strong-art** so the $5 trial is not spent on a dead template.
 
-Connecting **this GitHub repo at the project root** is enough. `railway.toml` forces the Docker builder and the root `Dockerfile` compiles `apps/outreach`. (Setting the service Root Directory to `apps/outreach` also works.)
+In **clever-compassion**, **+ New**:
 
-This service is the **outreach worker**, not the Twenty UI. Twenty still comes from the template in step 1 — add it as extra services in the same project.
+### 1. Databases (plugins, not this GitHub repo)
 
-In the **same Railway project** (so outreach can reach Redis privately):
+- **Redis**
+- **PostgreSQL**
 
-1. New service → GitHub (this repo). Leave Root Directory empty unless you prefer `apps/outreach`.
-2. If the dashboard Builder is stuck on Railpack, set it to **Dockerfile** (or redeploy after this `railway.toml` lands on `main`).
-3. Clear any custom start command such as `start.sh` unless you want `node dist/main.js` overridden.
-4. Generate a public domain for outreach.
+### 2. Twenty server (same GitHub repo as outreach)
 
-Variables:
+- New service → GitHub → `adarshx01/TwentyCRM`
+- Builder: **Dockerfile**
+- Dockerfile path: `infra/twenty/Dockerfile.server`
+- Generate a **public domain** (this is the CRM you open in the browser)
+- Health path: `/healthz`
+
+Variables (names must match your plugin names; click Variable → Add variable reference):
 
 ```text
-NODE_ENV=production
-TWENTY_BASE_URL=https://<twenty-server-public-domain>
-TWENTY_API_KEY=<from Twenty>
-TWENTY_WEBHOOK_SECRET=<optional, webhook HMAC>
-OUTREACH_API_TOKEN=<long random; required so /outreach/run is not public>
-REDIS_URL=redis://:${{redis.REDIS_PASSWORD}}@${{redis.RAILWAY_PRIVATE_DOMAIN}}:6379/1?family=0
+PORT=8080
+NODE_PORT=8080
+PG_DATABASE_URL=${{Postgres.DATABASE_URL}}
+REDIS_URL=${{Redis.REDIS_URL}}?family=0
+SERVER_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}
+ENCRYPTION_KEY=<openssl rand -base64 32, then copy to worker>
+APP_SECRET=<random, then copy to worker>
+STORAGE_TYPE=S_3
+STORAGE_S3_REGION=auto
+STORAGE_S3_NAME=${{twenty-storage.BUCKET}}
+STORAGE_S3_ENDPOINT=${{twenty-storage.ENDPOINT}}
+STORAGE_S3_ACCESS_KEY_ID=${{twenty-storage.ACCESS_KEY_ID}}
+STORAGE_S3_SECRET_ACCESS_KEY=${{twenty-storage.SECRET_ACCESS_KEY}}
+```
+
+If you have no bucket yet: **+ New** → storage/bucket named `twenty-storage`. Without it, skip `STORAGE_*` and set `STORAGE_TYPE=local` **only to get a first login**; attachments and the worker will be wrong.
+
+### 3. Twenty worker (same repo)
+
+- Dockerfile path: `infra/twenty/Dockerfile.worker`
+- **No** public domain
+- Copy the same `PG_DATABASE_URL`, `REDIS_URL`, `SERVER_URL`, `ENCRYPTION_KEY`, `APP_SECRET`, `STORAGE_*`
+- Extra:
+
+```text
+DISABLE_DB_MIGRATIONS=true
+DISABLE_CRON_JOBS_REGISTRATION=true
+```
+
+Worker starts only after server `/healthz` is up.
+
+### 4. Wire outreach (existing `TwentyCRM` service)
+
+Rename it to `outreach` in the UI. **Variables** (you currently have none):
+
+```text
+REDIS_URL=${{Redis.REDIS_URL}}/1?family=0
+TWENTY_BASE_URL=https://${{twenty-server.RAILWAY_PUBLIC_DOMAIN}}
+TWENTY_API_KEY=<from Twenty Settings → APIs after first login>
+OUTREACH_API_TOKEN=<long random>
 OUTREACH_SEND_ENABLED=false
-OPENAI_API_KEY=
-FROM_EMAIL=sales@recruitmentbricks.ai
-FROM_NAME=Recruitment Bricks
 ```
 
-Logical Redis DB **1** keeps BullMQ off Twenty’s default DB 0.
+Redeploy outreach. Deploy logs must **not** say `redis://127.0.0.1:6379/1`.
 
-Health: `GET https://<outreach-domain>/health`
+### 5. First login
 
-In Twenty, point the webhook at `https://<outreach-domain>/internal/twenty/webhook`.
-
-Trigger a deal (replace token and id):
-
-```bash
-curl -sS -X POST "https://<outreach-domain>/outreach/run" \
-  -H "Authorization: Bearer $OUTREACH_API_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"opportunityId":"<uuid>"}'
-```
-
-Leave `OUTREACH_SEND_ENABLED=false` until SMTP/Resend is configured.
-
-### 3. Seed CRM fields
-
-From a laptop that can reach the public Twenty URL, with `TWENTY_BASE_URL` and `TWENTY_API_KEY` in `apps/outreach/.env`:
+Open the **server** public URL (not `…-7493…`). Create the Recruitment Bricks workspace. Then seed from your laptop:
 
 ```bash
 cd apps/outreach
+# TWENTY_BASE_URL=https://<server-domain>
+# TWENTY_API_KEY=...
 npm run seed:crm
 ```
 
-Or finish [apps/outreach/src/seed/PLAYBOOK.md](../apps/outreach/src/seed/PLAYBOOK.md) in the UI.
+## Why the official template failed
 
-## Render (outreach only)
+The [Railway Twenty v2 template](https://railway.com/deploy/twenty-crm-v2-railway) is the right *shape*, but in **strong-art** the **server image never built**. The worker script waits for `SERVER_URL/healthz` and then exits. Empty `twenty-storage` also means S3 vars are missing. Fixing it in a second project does not help outreach until both live together.
 
-[`render.yaml`](../render.yaml) at the repo root creates **rb-outreach** (Docker) and a private Redis (`noeviction`). Connect the GitHub repo in the Render dashboard and apply the Blueprint.
+Trial credit (**30 days or $5**) will not hold a full Twenty stack for long. If server build fails again, use local `infra/twenty` until you pay or move to a VPS.
 
-Then set in the dashboard (Blueprint leaves them for you):
+## Render
 
-- `TWENTY_BASE_URL` — public Twenty URL (Railway or elsewhere)
-- `TWENTY_API_KEY`
-- `TWENTY_WEBHOOK_SECRET` if you use webhooks
-- `OPENAI_API_KEY` if you want LLM drafts
-
-`OUTREACH_API_TOKEN` is generated. Copy it from the Render env UI.
-
-Do **not** run Twenty from this Blueprint. Attachments need object storage that both the Twenty server and worker can see; Render disks are per-service. If you later insist on Twenty on Render, use Cloudflare R2 (or S3) with `STORAGE_TYPE=S_3` and the same `STORAGE_S3_*` on server and worker, and set `NODE_PORT` to Render’s `PORT`.
-
-## What this environment cannot do
-
-Railway CLI is not installed here and there is no authenticated Render/Railway session. Hosting is configured and documented; the first production deploy is a dashboard click after this repo is on GitHub (or after you `railway link` locally).
+[`render.yaml`](../render.yaml) is still outreach + Redis only.

@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Headers,
   HttpCode,
   Post,
@@ -10,14 +11,21 @@ import {
 } from '@nestjs/common';
 import { RunOutreachDto } from './dto';
 import { OutreachService } from './outreach.service';
+import { statusHtml, wiringStatus } from './status.page';
 
 @Controller()
 export class OutreachController {
   constructor(private readonly outreach: OutreachService) {}
 
+  @Get()
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  root() {
+    return statusHtml();
+  }
+
   @Get('health')
   health() {
-    return { ok: true, service: 'rb-outreach' };
+    return wiringStatus();
   }
 
   @Post('outreach/run')

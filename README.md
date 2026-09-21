@@ -33,7 +33,7 @@ Twenty remains the system of record. WhatsApp, Teams, and the marketing Solution
 
 ```text
 docs/            architecture, data model, lifecycle, hosting, later integrations
-infra/twenty/    Docker Compose for Twenty + Postgres + Redis
+infra/twenty/    Docker Compose (local) + Dockerfiles (Railway server/worker)
 apps/outreach/   NestJS worker (research, draft, optional send)
 render.yaml      Render Blueprint for outreach + Redis only
 ```

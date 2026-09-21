@@ -10,6 +10,8 @@ docker compose down      # stop
 
 UI: http://localhost:3000
 
+Railway: `Dockerfile.server` and `Dockerfile.worker` wrap the same image. Add those services in the **same** project as outreach. See [docs/09-hosting.md](../../docs/09-hosting.md).
+
 Postgres is not published. Redis is `127.0.0.1:6379` for the outreach worker.
 
 Full runbook: [docs/05-twenty-ops.md](../../docs/05-twenty-ops.md).

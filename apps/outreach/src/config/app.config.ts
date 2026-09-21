@@ -17,6 +17,10 @@ export type AppConfig = {
   smtpPassword: string;
 };
 
+export function redisLooksLocal(url: string): boolean {
+  return /127\.0\.0\.1|localhost/i.test(url);
+}
+
 export function loadConfig(): AppConfig {
   const sendRaw = (process.env.OUTREACH_SEND_ENABLED ?? 'false').toLowerCase();
   return {

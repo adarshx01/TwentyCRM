@@ -22,7 +22,7 @@ Twenty Redis must be up (`infra/twenty` publishes `127.0.0.1:6379`).
 
 Health: http://localhost:3100/health
 
-Production: `npm run build && npm start` (or the `Dockerfile`). Railway/Render: [docs/09-hosting.md](../../docs/09-hosting.md). If `OUTREACH_API_TOKEN` is set, `/outreach/run` requires `Authorization: Bearer <token>`.
+The browser at `/` shows a status page (this is not the Twenty CRM UI). Production: `npm run build && npm start` (or the `Dockerfile`). Railway/Render: [docs/09-hosting.md](../../docs/09-hosting.md). If `OUTREACH_API_TOKEN` is set, `/outreach/run` requires `Authorization: Bearer <token>`.
 
 ## Run one deal
 
