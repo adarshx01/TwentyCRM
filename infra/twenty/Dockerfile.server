@@ -1,7 +1,7 @@
-# Pulls the official CRM image. Build context must be the repo root.
+# Pulls the official CRM image. Use Railway Root Directory = infra/twenty
 FROM twentycrm/twenty:v2.39.5
 USER root
-COPY infra/twenty/start-server.sh /usr/local/bin/start-twenty-server
+COPY start-server.sh /usr/local/bin/start-twenty-server
 RUN chmod 0755 /usr/local/bin/start-twenty-server
 USER 1000
 ENTRYPOINT ["/usr/local/bin/start-twenty-server"]
