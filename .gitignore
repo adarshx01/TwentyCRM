@@ -7,6 +7,7 @@
 # backups and dumps
 infra/twenty/backups/
 *.sql
+!infra/conversation/initdb/*.sql
 
 # node
 node_modules/
