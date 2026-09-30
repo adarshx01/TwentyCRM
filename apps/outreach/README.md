@@ -1,5 +1,7 @@
 # Outreach worker
 
+This is the Recruitment Bricks email worker, not the conversational CRM. Chat, WhatsApp, and Teams are [`apps/conversation`](../conversation) ([checklist](../../docs/conversational-crm/07-operator-whatsapp-teams.md)).
+
 NestJS service that:
 
 1. Loads an Opportunity (and Company / Person) from Twenty

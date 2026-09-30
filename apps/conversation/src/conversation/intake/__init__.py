@@ -1,0 +1,1 @@
+"""Labelled email intake."""

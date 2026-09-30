@@ -1,0 +1,105 @@
+# App database for the conversational CRM. This is not Twenty's Postgres.
+# Twenty stays in infra/twenty on image twentycrm/twenty (do not clone twentyhq/twenty).
+
+name: conversation
+
+x-app-env: &app-env
+  DATABASE_URL: postgresql+psycopg://conversation_app:conversation_app@db:5432/conversation
+  MIGRATION_DATABASE_URL: postgresql+psycopg://conversation:conversation@db:5432/conversation
+  QUEUE_BACKEND: redis
+  REDIS_URL: redis://redis:6379/0
+  OPERATOR_TOKEN: ${OPERATOR_TOKEN:-replace-me}
+  WEBHOOK_SHARED_SECRET: ${WEBHOOK_SHARED_SECRET:-replace-me}
+  TWENTY_BASE_URL: ${TWENTY_BASE_URL:-http://host.docker.internal:3000}
+  APP_ENV: ${APP_ENV:-development}
+  WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+  WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+  WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+  WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+  WHATSAPP_GRAPH_VERSION: ${WHATSAPP_GRAPH_VERSION:-v26.0}
+  WHATSAPP_TEMPLATE_NAME: ${WHATSAPP_TEMPLATE_NAME:-}
+  WHATSAPP_TEMPLATE_LANGUAGE: ${WHATSAPP_TEMPLATE_LANGUAGE:-en}
+  TEAMS_APP_ID: ${TEAMS_APP_ID:-}
+  TEAMS_APP_PASSWORD: ${TEAMS_APP_PASSWORD:-}
+  TEAMS_TENANT_ID: ${TEAMS_TENANT_ID:-}
+  TEAMS_SHARED_SECRET: ${TEAMS_SHARED_SECRET:-}
+  EXTRACTION_PROVIDER: ${EXTRACTION_PROVIDER:-fixture}
+  EXTRACTION_HTTP_URL: ${EXTRACTION_HTTP_URL:-}
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: conversation
+      POSTGRES_PASSWORD: conversation
+      POSTGRES_DB: conversation
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - conversation-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U conversation -d conversation"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ../../apps/conversation
+      dockerfile: Dockerfile
+    ports:
+      - "3200:3200"
+    environment:
+      <<: *app-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3200/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: ../../apps/conversation
+      dockerfile: Dockerfile
+    command: ["python", "-m", "conversation.worker_main"]
+    environment:
+      <<: *app-env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  conversation-db:

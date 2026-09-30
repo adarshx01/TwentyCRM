@@ -1,6 +1,6 @@
 # Integrations later (WhatsApp + Teams)
 
-Not built in this milestone. The outreach NestJS app is the future integration layer so we do not grow a second brain.
+Not built in the outreach milestone. The PDF conversational CRM is a separate FastAPI service, [`apps/conversation`](../apps/conversation), documented in [conversational-crm](conversational-crm/README.md). It does not replace Twenty and it does not change the outreach worker. The notes below are still the Recruitment Bricks rule: channels feed Twenty, they do not become a second CRM.
 
 ## Rule
 

@@ -12,6 +12,14 @@ infra/twenty/backups/
 node_modules/
 dist/
 coverage/
+
+# python
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+*.pyc
+*.egg-info/
 *.log
 npm-debug.log*
 *.tsbuildinfo

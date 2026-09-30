@@ -10,3 +10,4 @@
 8. [Source of truth](07-source-of-truth.md)
 9. [Local dry-run](08-local-e2e.md)
 10. [Hosting (Railway / Render)](09-hosting.md)
+11. [Conversational CRM](conversational-crm/README.md) (separate FastAPI service; gates G1–G5 open)
