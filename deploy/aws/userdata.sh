@@ -2,7 +2,8 @@
 # First boot: Docker + the release helper. Secrets and code arrive later through release.sh (SSM), never through user-data.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -y && apt-get install -y docker.io docker-compose-v2 awscli jq unzip curl
+apt-get update -y && apt-get install -y docker.io docker-compose-v2 jq unzip curl
+command -v aws >/dev/null || { curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscli.zip && unzip -q /tmp/awscli.zip -d /tmp && /tmp/aws/install; }
 systemctl enable --now docker
 mkdir -p /opt/crmbee/releases
 cat > /opt/crmbee/apply.sh <<'EOS'
