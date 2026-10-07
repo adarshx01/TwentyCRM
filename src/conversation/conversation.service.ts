@@ -653,8 +653,8 @@ export class ConversationService {
           const c = step.clarification;
           const two = c.options && c.options.length === 2 && ['match_person', 'match_company'].includes(c.kind);
           return say(renderClarification(c.question, c.options, two ? [
-            { id: `d|${fresh.id}|${fresh.version}|${'0'.repeat(8)}|update_existing`, title: 'Update existing' },
-            { id: `d|${fresh.id}|${fresh.version}|${'0'.repeat(8)}|create_new`, title: 'Create new' },
+            { id: `d|${fresh.id}|${fresh.version}|${'0'.repeat(8)}|update_existing`, title: c.kind === 'match_company' ? 'Use existing' : 'Update existing' },
+            { id: `d|${fresh.id}|${fresh.version}|${'0'.repeat(8)}|create_new`, title: c.kind === 'match_company' ? 'Create new company' : 'Create new contact' },
           ] : undefined));
         }
         case 'ready':
@@ -699,7 +699,7 @@ export class ConversationService {
     if (outcome.status === 'noop' || !outcome.op) return;
     const op = outcome.op;
     const live = await this.identity.getActiveUser(op.tenantId, op.userId);
-    if (!live || (op.channel !== 'whatsapp' && op.channel !== 'teams')) return;
+    if (!live || !['whatsapp', 'teams', 'dev', 'web'].includes(op.channel as string)) return;
     const channel = (op.channel ?? channelHint) as ChannelName;
     const say = (text: string | ChannelReply, k: string) => this.replies.send({ tenantId: op.tenantId, userId: op.userId, channel }, typeof text === 'string' ? { text } : text, `op:${op.id}:${k}`);
     const progress = OperationJournal.describeProgress(op);
@@ -721,7 +721,7 @@ export class ConversationService {
 
   /** Interim "what is saved vs retrying" message after a transient failure (CAP-08). */
   async notifyProgress(tenantId: string, op: OperationRow): Promise<void> {
-    if (op.channel !== 'whatsapp' && op.channel !== 'teams') return;
+    if (!['whatsapp', 'teams', 'dev', 'web'].includes(op.channel as string)) return;
     const progress = OperationJournal.describeProgress(op);
     await this.replies.send({ tenantId, userId: op.userId, channel: op.channel as ChannelName }, { text: `⏳ Still saving (ref ${OperationEffects.reference(op.id)}).\nSaved so far: ${progress.saved.join(', ') || 'nothing yet'}\nRetrying: ${progress.pending.join(', ')}` }, `op:${op.id}:progress`);
   }

@@ -26,6 +26,7 @@ export class DuplicateDetector {
     const sig = this.signature(d);
     if (d.matches.signature === sig) return;
     d.clarifications = d.clarifications.filter((c) => !['match_person', 'match_company', 'opportunity_target'].includes(c.kind));
+    const prev = { decisions: d.decisions, people: new Set(d.matches.people.map((m) => m.id)), companies: new Set(d.matches.companies.map((m) => m.id)) };
     d.decisions = {};
     d.matches = { people: [], companies: [], hiddenCount: 0, signature: sig };
     const all = { kind: 'all' as const };
@@ -56,10 +57,15 @@ export class DuplicateDetector {
       d.matches.companies = cs.map((c) => ({ id: c.id, label: c.name, website: c.website }));
     }
 
-    if (d.matches.people.length) {
-      d.clarifications.push(this.personQuestion(d.matches.people));
-    }
-    if (d.matches.companies.length) d.clarifications.push(this.companyQuestion(d));
+    // An answer the user already gave survives an edit unless the edit surfaced a record they were not asked about (never merge silently).
+    const keep = (decision: 'new' | string | undefined, seen: Set<string>, now: string[]) =>
+      decision !== undefined && now.every((id) => seen.has(id)) && (decision === 'new' || now.includes(decision));
+    const peopleIds = d.matches.people.map((m) => m.id);
+    const companyIds2 = d.matches.companies.map((m) => m.id);
+    if (keep(prev.decisions.person, prev.people, peopleIds)) d.decisions.person = prev.decisions.person;
+    else if (d.matches.people.length) d.clarifications.push(this.personQuestion(d.matches.people));
+    if (keep(prev.decisions.company, prev.companies, companyIds2)) d.decisions.company = prev.decisions.company;
+    else if (d.matches.companies.length) d.clarifications.push(this.companyQuestion(d));
   }
 
   private personQuestion(people: MatchSummary[]): Clarification {
