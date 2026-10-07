@@ -51,3 +51,12 @@ agent/__pycache__/
 .env.local
 .run/
 .data/
+
+# local run / twenty app
+vendor/
+twenty-app/node_modules/
+twenty-app/.twenty/
+twenty-app/.yarn/
+infra/twenty/.env
+.run/
+.env-previousbuilddump

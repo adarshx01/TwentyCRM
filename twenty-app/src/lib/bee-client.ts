@@ -17,11 +17,16 @@ const callerClaims = (): { workspaceId: string; userId: string } => {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Talks to the CRM Bee API as the signed-in member. */
+const describe = (step: string, e: unknown): Error => {
+  const err = e as { message?: string; cause?: { code?: string; message?: string } };
+  return new Error(`${step}: ${err?.message ?? e}${err?.cause ? ` (${err.cause.code ?? ''} ${err.cause.message ?? ''})` : ''}`);
+};
+
 export const createBeeClient = async () => {
   const { workspaceId, userId } = callerClaims();
   const members = await new RestApiClient().get<{ data?: { workspaceMembers?: Array<{ userEmail?: string }> } }>('/rest/workspaceMembers', {
     query: { filter: `userId[eq]:${userId}`, limit: 1 },
-  });
+  }).catch((e) => { throw describe(`Twenty member lookup (${process.env.TWENTY_API_URL ?? 'no TWENTY_API_URL'})`, e); });
   const email = (members as { data?: { workspaceMembers?: Array<{ userEmail?: string }> } })?.data?.workspaceMembers?.[0]?.userEmail;
   if (!email) throw new Error('Could not identify your Twenty account.');
 
@@ -32,7 +37,7 @@ export const createBeeClient = async () => {
   const who = { workspaceId, email };
 
   const request = async <T,>(path: string, init: RequestInit): Promise<T> => {
-    const res = await fetch(`${base}/v1/crm-chat/${path}`, init);
+    const res = await fetch(`${base}/v1/crm-chat/${path}`, init).catch((e) => { throw describe(`Bee request ${base}`, e); });
     const text = await res.text();
     let json: unknown = null;
     try { json = text ? JSON.parse(text) : null; } catch { /* non-JSON */ }

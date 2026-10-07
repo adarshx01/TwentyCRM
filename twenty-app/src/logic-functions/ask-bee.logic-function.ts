@@ -6,6 +6,15 @@ import { createBeeClient } from 'src/lib/bee-client';
 type Params = { message?: string; buttonId?: string };
 
 const handler = async (params: Params) => {
+  try {
+    return await run(params);
+  } catch (e) {
+    console.error('ask-bee failed', e);
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+};
+
+const run = async (params: Params) => {
   const bee = await createBeeClient();
   const replies = params.buttonId ? await bee.pressButton(params.buttonId) : params.message ? await bee.sendText(params.message) : [];
   if (!replies.length) return { replies: [], note: 'Bee has not replied yet. Ask the user to check again in a moment.' };
