@@ -3,7 +3,7 @@
 ARG NODE_VERSION=22.20.0
 
 FROM node:${NODE_VERSION}-alpine AS base
-RUN corepack enable
+RUN npm install -g pnpm@11.22.0 && pnpm --version
 WORKDIR /app
 
 FROM base AS deps
