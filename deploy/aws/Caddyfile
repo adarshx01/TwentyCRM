@@ -1,0 +1,16 @@
+# Automatic HTTPS (Let's Encrypt). CRM_HOST / BEE_HOST are <elastic-ip-with-dashes>.sslip.io names.
+{$CRM_HOST} {
+	encode zstd gzip
+	reverse_proxy server:3000
+}
+
+# Only the provider webhooks are reachable from the internet; admin, chat relay, metrics and docs stay internal.
+{$BEE_HOST} {
+	@public path /webhooks/* /health
+	handle @public {
+		reverse_proxy bee-api:3000
+	}
+	handle {
+		respond "not found" 404
+	}
+}

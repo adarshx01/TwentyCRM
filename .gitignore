@@ -60,3 +60,4 @@ twenty-app/.yarn/
 infra/twenty/.env
 .run/
 .env-previousbuilddump
+.state.json

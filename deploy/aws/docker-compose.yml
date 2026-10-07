@@ -1,0 +1,88 @@
+# One-host deployment: Twenty (pinned) + CRM Bee (api, worker, scheduler, Python agent) behind Caddy.
+# Database for Bee is Supabase (DATABASE_URL in bee.env); Twenty has its own Postgres + Redis; Bee has its own Redis.
+name: crmbee
+x-bee: &bee
+  image: crmbee/app:${RELEASE:-local}
+  build: { context: ../.., dockerfile: Dockerfile }
+  restart: always
+  env_file: /opt/crmbee/bee.env
+  depends_on: { bee-redis: { condition: service_healthy }, agent: { condition: service_healthy } }
+  stop_grace_period: 45s
+  extra_hosts: ["host.docker.internal:host-gateway"]
+
+x-twenty-env: &twenty-env
+  PG_DATABASE_URL: postgres://postgres:${TWENTY_PG_PASSWORD}@db:5432/default
+  SERVER_URL: https://${CRM_HOST}
+  REDIS_URL: redis://redis:6379
+  STORAGE_TYPE: local
+  APP_SECRET: ${TWENTY_APP_SECRET}
+  ENCRYPTION_KEY: ${TWENTY_ENCRYPTION_KEY}
+  FALLBACK_ENCRYPTION_KEY: ${TWENTY_ENCRYPTION_KEY}
+  LOGIC_FUNCTION_TYPE: LOCAL
+  OPENAI_API_KEY: ${OPENAI_API_KEY}
+
+services:
+  caddy:
+    image: caddy:2
+    restart: always
+    ports: ["80:80", "443:443"]
+    environment: { CRM_HOST: "${CRM_HOST}", BEE_HOST: "${BEE_HOST}" }
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy-data:/data", "caddy-config:/config"]
+    networks:
+      default:
+        aliases: ["${CRM_HOST}"]   # Bee reaches Twenty through its public name (valid TLS) without leaving the host
+    depends_on: [server, bee-api]
+
+  db:
+    image: postgres:16
+    restart: always
+    environment: { POSTGRES_DB: default, POSTGRES_USER: postgres, POSTGRES_PASSWORD: "${TWENTY_PG_PASSWORD}" }
+    volumes: ["twenty-db:/var/lib/postgresql/data"]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres -d default"], interval: 5s, timeout: 5s, retries: 20 }
+  redis:
+    image: redis:7
+    restart: always
+    command: ["--maxmemory-policy", "noeviction"]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 5s, retries: 20 }
+  server:
+    image: twentycrm/twenty:v2.45.6
+    restart: always
+    environment: { <<: *twenty-env, NODE_PORT: "3000" }
+    volumes: ["twenty-data:/app/packages/twenty-server/.local-storage"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on: { db: { condition: service_healthy }, redis: { condition: service_healthy } }
+    healthcheck: { test: "curl --fail http://localhost:3000/healthz", interval: 10s, timeout: 5s, retries: 30, start_period: 60s }
+  worker:
+    image: twentycrm/twenty:v2.45.6
+    restart: always
+    command: ["yarn", "worker:prod"]
+    environment: { <<: *twenty-env, DISABLE_DB_MIGRATIONS: "true", DISABLE_CRON_JOBS_REGISTRATION: "true" }
+    volumes: ["twenty-data:/app/packages/twenty-server/.local-storage"]
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on: { server: { condition: service_healthy } }
+
+  bee-redis:
+    image: redis:7
+    restart: always
+    command: ["--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    volumes: ["bee-redis:/data"]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 5s, retries: 20 }
+  agent:
+    build: { context: ../../agent }
+    image: crmbee/agent:${RELEASE:-local}
+    restart: always
+    env_file: /opt/crmbee/agent.env
+    healthcheck: { test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8001/health')"], interval: 10s, timeout: 3s, retries: 10, start_period: 20s }
+  bee-api:
+    <<: *bee
+    environment: { APP_ROLE: api, APP_PORT: "3000" }
+    volumes: ["bee-media:/data/media"]
+  bee-worker:
+    <<: *bee
+    environment: { APP_ROLE: worker, APP_PORT: "3001" }
+    volumes: ["bee-media:/data/media"]
+  bee-scheduler:
+    <<: *bee
+    environment: { APP_ROLE: scheduler, APP_PORT: "3002" }
+
+volumes: { caddy-data: {}, caddy-config: {}, twenty-db: {}, twenty-data: {}, bee-redis: {}, bee-media: {} }
