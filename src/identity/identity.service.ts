@@ -5,7 +5,7 @@ import { APP_CONFIG, type AppConfig } from '../config/configuration';
 import { DbService } from '../database/db.service';
 import { channelBindings, conversationSessions, drafts, enrollments, schedules, tenants, users } from '../database/schema';
 import { toTenantContext } from '../tenant/tenant.service';
-import type { TenantContext, UserContext } from '../common/types';
+import type { ChannelName, TenantContext, UserContext } from '../common/types';
 import { AuditService } from '../audit/audit.service';
 import { UserFacingError } from '../common/errors';
 
@@ -188,7 +188,7 @@ export class IdentityService {
   // ── Enrollment (IAM-02) ─────────────────────────────────────
 
   /** Create an expiring single-use code to be delivered through an authenticated company process. */
-  async createEnrollment(input: { tenantId: string; userId: string; channel: 'whatsapp' | 'teams' | 'dev'; expectedExternalId?: string; createdBy: string; ttlMinutes?: number }): Promise<{ code: string; expiresAt: Date }> {
+  async createEnrollment(input: { tenantId: string; userId: string; channel: 'whatsapp' | 'teams' | 'dev' | 'web'; expectedExternalId?: string; createdBy: string; ttlMinutes?: number }): Promise<{ code: string; expiresAt: Date }> {
     const code = newEnrollmentCode();
     const expiresAt = new Date(Date.now() + (input.ttlMinutes ?? 60) * 60_000);
     await this.db.tenantTx(input.tenantId, async (tx) => {
@@ -223,6 +223,29 @@ export class IdentityService {
       await this.audit.write({ tenantId: claimed.tenantId, userId: claimed.userId, channel: key.channel, action: 'enrollment.redeemed', resourceType: 'channel_binding' });
     }
     return claimed;
+  }
+
+  /**
+   * Bind an in-CRM chat identity. The caller (the Bee app inside Twenty, authenticated by a shared secret) vouches for the
+   * Twenty workspace and the member's email; the user must already exist and be active in the tenant that owns that workspace.
+   */
+  async bindTrusted(input: { twentyWorkspaceId: string; email: string; channel: ChannelName; connectionId: string; externalId: string }): Promise<{ tenantId: string; userId: string } | null> {
+    const email = input.email.trim().toLowerCase();
+    const row = await this.db.systemTx(async (tx) => {
+      const [r] = await tx
+        .select({ tenantId: tenants.id, userId: users.id })
+        .from(tenants)
+        .innerJoin(users, eq(users.tenantId, tenants.id))
+        .where(and(eq(tenants.twentyWorkspaceId, input.twentyWorkspaceId), eq(tenants.status, 'active'), sql`lower(${users.email}) = ${email}`, eq(users.status, 'active'), isNull(users.revokedAt)))
+        .limit(1);
+      if (!r) return null;
+      await tx
+        .insert(channelBindings)
+        .values({ tenantId: r.tenantId, userId: r.userId, channel: input.channel, connectionId: input.connectionId, externalId: input.externalId, enrolledBy: null, lastInboundAt: new Date() })
+        .onConflictDoUpdate({ target: [channelBindings.channel, channelBindings.connectionId, channelBindings.externalId, channelBindings.tenantId], set: { userId: r.userId, status: 'active', optedOut: false } });
+      return r;
+    });
+    return row;
   }
 
   // ── Revocation (IAM-05) ─────────────────────────────────────

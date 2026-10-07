@@ -16,7 +16,7 @@ const UserSpec = z.object({
   managedTeamIds: z.array(z.string()).optional(),
   timezone: z.string().optional(),
   morningReminderTime: z.string().regex(/^\d{2}:\d{2}$/).optional(),
-  preferredReminderChannel: z.enum(['whatsapp', 'teams', 'dev']).optional(),
+  preferredReminderChannel: z.enum(['whatsapp', 'teams', 'dev', 'web']).optional(),
   dualDelivery: z.boolean().optional(),
 }).strict().refine((u) => u.email || u.twentyMemberId, { message: 'a user needs an email or twentyMemberId as its stable key' });
 

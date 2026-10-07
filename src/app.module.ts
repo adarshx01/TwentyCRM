@@ -31,6 +31,8 @@ import { MediaService } from './media/media.service';
 import { CHANNEL_SENDERS, MEDIA_FETCHERS, type ChannelSenders, type MediaFetchers } from './channels/channel.types';
 import { DevChannel, DevMediaFetcher, DevSender } from './channels/dev/dev.channel';
 import { DevController } from './channels/dev/dev.controller';
+import { WebChannel } from './channels/web/web.channel';
+import { WebChatController } from './channels/web/web.controller';
 import { WhatsAppSender } from './channels/whatsapp/whatsapp.sender';
 import { WhatsAppMediaFetcher } from './channels/whatsapp/whatsapp.media';
 import { BotFrameworkVerifier, TEAMS_VERIFIER, TeamsMediaFetcher, TeamsSender, TeamsTokenProvider } from './channels/teams/teams.service';
@@ -71,13 +73,13 @@ const infra: Provider[] = [
   { provide: MAILBOX_PROVIDER, useExisting: GraphMailboxProvider },
   {
     provide: CHANNEL_SENDERS,
-    useFactory: (c: AppConfig, wa: WhatsAppSender, teams: TeamsSender, dev: DevChannel): ChannelSenders => ({ ...(c.whatsapp ? { whatsapp: wa } : {}), ...(c.teams ? { teams } : {}), ...(dev.enabled ? { dev: new DevSender(dev) } : {}) }),
-    inject: [APP_CONFIG, WhatsAppSender, TeamsSender, DevChannel],
+    useFactory: (c: AppConfig, wa: WhatsAppSender, teams: TeamsSender, dev: DevChannel, web: WebChannel): ChannelSenders => ({ ...(c.whatsapp ? { whatsapp: wa } : {}), ...(c.teams ? { teams } : {}), ...(dev.enabled ? { dev: new DevSender(dev) } : {}), ...(web.enabled ? { web: new DevSender(web, 'web') } : {}) }),
+    inject: [APP_CONFIG, WhatsAppSender, TeamsSender, DevChannel, WebChannel],
   },
   {
     provide: MEDIA_FETCHERS,
-    useFactory: (c: AppConfig, wa: WhatsAppMediaFetcher, teams: TeamsMediaFetcher, dev: DevChannel, storage: StorageProvider): MediaFetchers => ({ ...(c.whatsapp ? { whatsapp: wa } : {}), ...(c.teams ? { teams } : {}), ...(dev.enabled ? { dev: new DevMediaFetcher(storage) } : {}) }),
-    inject: [APP_CONFIG, WhatsAppMediaFetcher, TeamsMediaFetcher, DevChannel, STORAGE],
+    useFactory: (c: AppConfig, wa: WhatsAppMediaFetcher, teams: TeamsMediaFetcher, dev: DevChannel, web: WebChannel, storage: StorageProvider): MediaFetchers => ({ ...(c.whatsapp ? { whatsapp: wa } : {}), ...(c.teams ? { teams } : {}), ...(dev.enabled ? { dev: new DevMediaFetcher(storage) } : {}), ...(web.enabled ? { web: new DevMediaFetcher(storage) } : {}) }),
+    inject: [APP_CONFIG, WhatsAppMediaFetcher, TeamsMediaFetcher, DevChannel, WebChannel, STORAGE],
   },
   { provide: TEAMS_VERIFIER, useFactory: (c: AppConfig) => (c.teams ? new BotFrameworkVerifier(c.teams.appId) : null), inject: [APP_CONFIG] },
 ];
@@ -85,7 +87,7 @@ const infra: Provider[] = [
 const domain: Provider[] = [
   WorkspaceLimiter, QueueService, AuditService, TenantService, QuotaService, IdentityService,
   TwentyClient, TwentyAdapter, ActionAuthorizer, StepExecutor, OperationEffects, OperationJournal, ReconciliationService,
-  DevChannel, OpenAiProvider, AgentProvider, ExtractionService, MediaService, WhatsAppSender, WhatsAppMediaFetcher, TeamsTokenProvider, TeamsSender, TeamsMediaFetcher,
+  DevChannel, WebChannel, OpenAiProvider, AgentProvider, ExtractionService, MediaService, WhatsAppSender, WhatsAppMediaFetcher, TeamsTokenProvider, TeamsSender, TeamsMediaFetcher,
   OutboundService, DraftService, ConfirmationService, DuplicateDetector, MutationBuilder, ReplyService, ConversationService, ReportsService,
   SchedulePlanner, DigestService, SchedulerService, InboundService, IntakeService, AssignmentService, GraphMailboxProvider, MailboxPoller,
   MaintenanceService, TenantProvisioningService, WorkersService,
@@ -97,7 +99,7 @@ class CoreModule {}
 
 @Module({
   imports: [ConfigModule, DatabaseModule, CoreModule],
-  controllers: [WebhooksController, ApiController, AdminController, IntakeWebhookController, HealthController, DevController],
+  controllers: [WebhooksController, ApiController, AdminController, IntakeWebhookController, HealthController, DevController, WebChatController],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_GUARD, useClass: AuthGuard },

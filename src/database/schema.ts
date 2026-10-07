@@ -70,7 +70,7 @@ export interface TenantSettings {
   /** ISO-3166 alpha-2 used only as a parsing hint for national phone numbers */
   defaultCountry?: string;
   /** Internal Teams destination (CFG-03 notification destination) */
-  notificationDestination?: { channel: 'whatsapp' | 'teams' | 'dev'; userId?: string; teamsChannelId?: string };
+  notificationDestination?: { channel: 'whatsapp' | 'teams' | 'dev' | 'web'; userId?: string; teamsChannelId?: string };
   reminderCutoffMinutes?: number;
   /** Secret reference for verifying Twenty change-event webhooks (SYNC-02) */
   twentyWebhookSecretRef?: string;

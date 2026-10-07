@@ -96,8 +96,8 @@ describe('card + voice capture end to end (AT-03, AT-04, CAP-*, ACT-*)', () => {
     expect(person.beeOwnerMemberId).toBe(T.users.sam.memberId);
     expect(opp.pointOfContactId).toBe(person.id); expect(opp.companyId).toBe(company.id); expect(opp.stage).toBe('NEW');
     expect(task.beeHasTime).toBe(true); expect(task.beeTaskKind).toBe('meeting'); expect(task.dueAt).toBe('2026-09-29T05:30:00.000Z');
-    expect(ws.all('taskTargets').map((t) => t.opportunityId)).toContain(opp.id);
-    expect(ws.all('noteTargets').map((t) => t.personId)).toContain(person.id);
+    expect(ws.all('taskTargets').map((t) => t.targetOpportunityId)).toContain(opp.id);
+    expect(ws.all('noteTargets').map((t) => t.targetPersonId)).toContain(person.id);
     expect(note.bodyV2.markdown).toContain('Met Rajesh');
     const msg = say().find((t) => /✅ Saved/.test(t))!;
     expect(msg).toMatch(/OP-[0-9A-F]{8}/);

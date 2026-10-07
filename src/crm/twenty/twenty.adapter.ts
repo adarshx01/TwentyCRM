@@ -262,7 +262,7 @@ export class TwentyAdapter implements CrmAdapter {
   }
 
   async listNotes(ctx: TenantContext, target: { personId?: string; companyId?: string; opportunityId?: string }, scope: ScopeFilter, limit = 5): Promise<CrmNote[]> {
-    const field = target.opportunityId ? 'opportunityId' : target.companyId ? 'companyId' : 'personId';
+    const field = target.opportunityId ? 'targetOpportunityId' : target.companyId ? 'targetCompanyId' : 'targetPersonId';
     const id = target.opportunityId ?? target.companyId ?? target.personId;
     if (!id) return [];
     const links = await this.client.listAll(ctx, '/rest/noteTargets', eq(field, id), { max: 200 });
@@ -337,8 +337,10 @@ export class TwentyAdapter implements CrmAdapter {
 
   private async ensureTargets(ctx: TenantContext, path: '/rest/noteTargets' | '/rest/taskTargets', ownerField: 'noteId' | 'taskId', ownerId: string, targets: { personId?: string; companyId?: string; opportunityId?: string }): Promise<void> {
     const existing = await this.client.listAll(ctx, path, eq(ownerField, ownerId), { max: 50 });
-    for (const [field, id] of Object.entries(targets)) {
+    for (const [name, id] of Object.entries(targets)) {
       if (!id) continue;
+      // Twenty names the link columns targetPersonId / targetCompanyId / targetOpportunityId.
+      const field = `target${name.charAt(0).toUpperCase()}${name.slice(1)}`;
       if (existing.records.some((r) => r[field] === id)) continue;
       await this.client.request(ctx, { method: 'POST', path, body: { [ownerField]: ownerId, [field]: id } });
     }

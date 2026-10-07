@@ -55,11 +55,17 @@
   },
   "users": [
     {
+      "displayName": "Workspace Admin",
+      "email": "admin@crmbee.local",
+      "role": "cxo",
+      "preferredReminderChannel": "web"
+    },
+    {
       "displayName": "Sam Seller",
       "email": "sam@demo.local",
       "role": "salesperson",
       "teamId": "north",
-      "preferredReminderChannel": "dev"
+      "preferredReminderChannel": "web"
     },
     {
       "displayName": "Meera Manager",
@@ -69,13 +75,13 @@
       "managedTeamIds": [
         "north"
       ],
-      "preferredReminderChannel": "dev"
+      "preferredReminderChannel": "web"
     },
     {
       "displayName": "Chris CXO",
       "email": "chris@demo.local",
       "role": "cxo",
-      "preferredReminderChannel": "dev"
+      "preferredReminderChannel": "web"
     }
   ]
 }

@@ -47,4 +47,4 @@ export interface RequestContext {
 export type OperationState = 'pending' | 'in_progress' | 'committed' | 'failed' | 'needs_repair';
 
 /** `dev` is the local development chat (DEV_CHANNEL=1, never in production). */
-export type ChannelName = 'whatsapp' | 'teams' | 'dev';
+export type ChannelName = 'whatsapp' | 'teams' | 'dev' | 'web';

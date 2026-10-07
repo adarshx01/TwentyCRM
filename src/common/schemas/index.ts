@@ -6,7 +6,7 @@ import { z } from 'zod';
 // ──────────────────────────────────────────────────────────────
 export const NormalizedEventSchema = z.object({
   providerEventId: z.string().min(1),
-  channel: z.enum(['whatsapp', 'teams', 'dev', 'email', 'web_form']),
+  channel: z.enum(['whatsapp', 'teams', 'dev', 'web', 'email', 'web_form']),
   connectionId: z.string().min(1),
   externalSenderId: z.string().min(1),
   conversationId: z.string().min(1),

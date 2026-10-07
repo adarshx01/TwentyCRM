@@ -121,7 +121,7 @@ describe('scoped reports and pipeline totals (SUM-01..03, AT-12, SYNC-03)', () =
       companies: [{ id: comp, name: 'Shared Corp', beeOwnerMemberId: T.users.cxo.memberId }],
       opportunities: [{ id: oppA, name: 'Shared deal A', stage: 'PROPOSAL', companyId: comp, amount: { amountMicros: 2_000_000_000, currencyCode: 'INR' }, beeOwnerMemberId: T.users.sam.memberId, beeTeamId: 'team-a' }, { id: oppB, name: 'Shared deal B', stage: 'MEETING', companyId: comp, beeOwnerMemberId: T.users.meera.memberId, beeTeamId: 'team-b' }],
       notes: [{ id: noteA, title: 'a', bodyV2: { markdown: 'Sam private note' }, beeOwnerMemberId: T.users.sam.memberId }, { id: noteB, title: 'b', bodyV2: { markdown: 'Meera private note' }, beeOwnerMemberId: T.users.meera.memberId }],
-      noteTargets: [{ noteId: noteA, companyId: comp }, { noteId: noteB, companyId: comp }],
+      noteTargets: [{ noteId: noteA, targetCompanyId: comp }, { noteId: noteB, targetCompanyId: comp }],
     });
     // Sam can see the company only if it is in his scope: it is owned by the CXO, so Sam gets nothing — and no leak.
     expect(await run('company_summary', 'sam', 'Shared Corp')).toContain('No matching records');

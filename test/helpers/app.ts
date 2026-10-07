@@ -43,6 +43,7 @@ export function testConfig(db: TestDb, twentyUrl: string, storageDir: string, ov
     observability: { metricsToken: 'metrics-token' },
     agent: {},
     dev: { channel: false },
+    web: { token: 'test-crm-chat-token-0123456789abcdef' },
     security: { jwtSecret: JWT_SECRET, adminApiKey: ADMIN_KEY },
     retention: { draftExpirySeconds: 1800, mediaCleanupHours: 24, mediaRetentionDays: 30, auditRetentionDays: 365, logRetentionDays: 30 },
     ...over,

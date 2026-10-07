@@ -63,7 +63,7 @@ export type JobPayload<T> = T & { _m: JobMeta };
 // ── Typed job bodies ───────────────────────────────────────────
 export interface InboundEventJob { eventId: string }                        // inbound_events.id + event body persisted in payload
 export interface MediaDescriptor { mediaId: string; mimeType: string; url?: string; filename?: string; size?: number }
-export interface AiExtractionJob { draftId: string; kind: 'card' | 'voice'; sourceEventId: string; channel: 'whatsapp' | 'teams' | 'dev'; connectionId: string; /** Message timestamp: relative dates resolve against it (CAP-05) */ receivedAt: string; descriptor: MediaDescriptor }
+export interface AiExtractionJob { draftId: string; kind: 'card' | 'voice'; sourceEventId: string; channel: 'whatsapp' | 'teams' | 'dev' | 'web'; connectionId: string; /** Message timestamp: relative dates resolve against it (CAP-05) */ receivedAt: string; descriptor: MediaDescriptor }
 export interface CrmWriteJob { operationId: string }
 export interface OutboundJob { deliveryId: string }
 export interface ReminderJob { scheduleId: string }

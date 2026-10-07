@@ -15,7 +15,7 @@ import { ReconciliationService } from '../crm/reconciliation.service';
 import { OperationJournal } from '../crm/operations/operation-journal.service';
 import { UserFacingError } from '../common/errors';
 
-const Enroll = z.object({ channel: z.enum(['whatsapp', 'teams', 'dev']), expectedExternalId: z.string().max(512).optional(), ttlMinutes: z.number().int().min(5).max(1440).optional() }).strict();
+const Enroll = z.object({ channel: z.enum(['whatsapp', 'teams', 'dev', 'web']), expectedExternalId: z.string().max(512).optional(), ttlMinutes: z.number().int().min(5).max(1440).optional() }).strict();
 const RolePatch = z.object({ role: z.enum(['salesperson', 'manager', 'cxo', 'client_admin']).optional(), teamId: z.string().nullable().optional(), managedTeamIds: z.array(z.string()).optional() }).strict();
 
 /**

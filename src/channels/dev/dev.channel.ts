@@ -14,7 +14,6 @@ export interface DevMessage {
   card?: unknown;
 }
 
-const key = (phone: string) => `crmbee:dev:msgs:${phone}`;
 
 /**
  * Local development chat. Replies are appended to a per-phone Redis list so the API process (which serves the UI)
@@ -24,24 +23,26 @@ const key = (phone: string) => `crmbee:dev:msgs:${phone}`;
 export class DevChannel implements OnModuleDestroy {
   private redis?: Redis;
   readonly enabled: boolean;
+  protected readonly prefix: string = 'dev';
+  protected key(id: string): string { return `crmbee:${this.prefix}:msgs:${id}`; }
 
   constructor(@Inject(APP_CONFIG) private readonly config: AppConfig) {
     this.enabled = config.dev.channel && config.app.nodeEnv !== 'production';
   }
 
-  private r(): Redis {
+  protected r(): Redis {
     return (this.redis ??= new Redis(this.config.redis.url, { maxRetriesPerRequest: 2 }));
   }
 
   async push(phone: string, msg: Omit<DevMessage, 'id' | 'at'>): Promise<string> {
     const full: DevMessage = { id: randomUUID(), at: new Date().toISOString(), ...msg };
-    const k = key(phone);
+    const k = this.key(phone);
     await this.r().multi().rpush(k, JSON.stringify(full)).ltrim(k, -200, -1).expire(k, 86_400).exec();
     return full.id;
   }
 
   async list(phone: string, afterId?: string): Promise<DevMessage[]> {
-    const all = (await this.r().lrange(key(phone), 0, -1)).map((s) => JSON.parse(s) as DevMessage);
+    const all = (await this.r().lrange(this.key(phone), 0, -1)).map((s) => JSON.parse(s) as DevMessage);
     if (!afterId) return all;
     const i = all.findIndex((m) => m.id === afterId);
     return i < 0 ? all : all.slice(i + 1);
@@ -53,8 +54,7 @@ export class DevChannel implements OnModuleDestroy {
 }
 
 export class DevSender implements ChannelSender {
-  readonly channel = 'dev' as const;
-  constructor(private readonly dev: DevChannel) {}
+  constructor(private readonly dev: DevChannel, readonly channel: 'dev' | 'web' = 'dev') {}
 
   async send(target: SendTarget, content: OutboundContent): Promise<SendResult> {
     const text = content.kind === 'template' ? `[template ${content.name}] ${content.fallbackText}` : content.text;
@@ -67,7 +67,7 @@ export class DevSender implements ChannelSender {
 export class DevMediaFetcher implements MediaFetcher {
   constructor(private readonly storage: StorageProvider) {}
   async fetch(d: { mediaId: string; mimeType: string }) {
-    if (!/^dev\/[0-9a-f-]{36}$/.test(d.mediaId)) throw new UserFacingError('That attachment could not be read.');
+    if (!/^(dev|web)\/[0-9a-f-]{36}$/.test(d.mediaId)) throw new UserFacingError('That attachment could not be read.');
     return { data: await this.storage.get(d.mediaId), mimeType: d.mimeType };
   }
 }

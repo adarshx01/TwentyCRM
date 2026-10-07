@@ -20,8 +20,8 @@ const STANDARD: Record<string, string[]> = {
   opportunity: ['name', 'amount', 'closeDate', 'stage', 'pointOfContactId', 'companyId'],
   note: ['title', 'bodyV2'],
   task: ['title', 'bodyV2', 'dueAt', 'status', 'assigneeId'],
-  noteTarget: ['noteId', 'personId', 'companyId', 'opportunityId'],
-  taskTarget: ['taskId', 'personId', 'companyId', 'opportunityId'],
+  noteTarget: ['noteId', 'targetPersonId', 'targetCompanyId', 'targetOpportunityId'],
+  taskTarget: ['taskId', 'targetPersonId', 'targetCompanyId', 'targetOpportunityId'],
   intakeReview: ['name'],
 };
 
@@ -274,14 +274,14 @@ export class FakeTwenty {
 
   private metadata(ws: FakeTwentyWorkspace, method: string, parts: string[], body: Rec | null): { status: number; body?: unknown } {
     if (parts[0] === 'objects' && method === 'GET') {
-      return { status: 200, body: { data: { objects: ws.objects.map((o) => ws.objectDef(o.nameSingular)) } } };
+      return { status: 200, body: { data: ws.objects.map((o) => ws.objectDef(o.nameSingular)), totalCount: ws.objects.length } };
     }
     if (parts[0] === 'objects' && method === 'POST') {
       const s = body!.nameSingular as string;
       if (!ws.customFields[s]) { ws.customFields[s] = new Set(); STANDARD[s] ??= ['name']; SINGULAR[body!.namePlural] = s; ws.data[body!.namePlural] ??= []; }
       const def = ws.objectDef(s);
       if (!ws.objects.some((o) => o.nameSingular === s)) ws.objects.push(def);
-      return { status: 201, body: { data: { createOneObject: def } } };
+      return { status: 201, body: def };
     }
     if (parts[0] === 'fields' && method === 'POST') {
       const objId = String(body!.objectMetadataId);

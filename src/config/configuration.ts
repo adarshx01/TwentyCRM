@@ -100,6 +100,10 @@ export const AppConfigSchema = z.object({
     /** Local development chat channel + web UI at /dev/chat. Refused when NODE_ENV=production. */
     channel: z.preprocess((v) => v === '1' || v === 'true' || v === true, z.boolean()).default(false),
   }),
+  web: z.object({
+    /** Shared secret the Bee app inside Twenty uses to call /v1/crm-chat. Unset = in-CRM chat disabled. */
+    token: z.string().min(24).optional(),
+  }),
   agent: z.object({
     /** Python LangChain conversation agent; when set it replaces the direct OpenAI provider */
     url: z.string().url().optional(),
@@ -199,6 +203,7 @@ export function loadConfig(): AppConfig {
       metricsToken: process.env.METRICS_TOKEN || undefined,
     },
     dev: { channel: process.env.DEV_CHANNEL },
+    web: { token: process.env.CRM_CHAT_TOKEN || undefined },
     agent: { url: process.env.AGENT_URL || undefined, token: process.env.AGENT_TOKEN || undefined },
     security: {
       jwtSecret: process.env.JWT_SECRET,

@@ -1,0 +1,23 @@
+// Generated once; keep stable across syncs.
+export const APP_UNIVERSAL_IDENTIFIER =
+  '9b650bfb-85fc-478d-961a-a40ee10235dc';
+export const ROLE_UNIVERSAL_IDENTIFIER =
+  '9a7b475c-3682-4765-83aa-1cea5d1ace82';
+export const FC_UNIVERSAL_IDENTIFIER =
+  '607395c1-6e44-4f62-9507-f1b41e646dc4';
+export const FN_UNIVERSAL_IDENTIFIER =
+  '7212d200-1851-475a-b87e-e404938fe40a';
+export const PAGE_UNIVERSAL_IDENTIFIER =
+  'cbe1fb02-685e-47ce-951a-cdaa0442638a';
+export const TAB_UNIVERSAL_IDENTIFIER =
+  '027d0be8-7eda-4101-8aee-508cea58a02a';
+export const WIDGET_UNIVERSAL_IDENTIFIER =
+  'b944cde4-6bdf-49de-8f91-98d67c444398';
+export const NAV_UNIVERSAL_IDENTIFIER =
+  'd7186451-cdee-4912-b7ee-766d80520623';
+export const VAR_URL_UNIVERSAL_IDENTIFIER =
+  'c2fba5ac-1190-47f8-8448-30138a903042';
+export const VAR_TOKEN_UNIVERSAL_IDENTIFIER =
+  'e55d1b95-8dae-48e6-aebf-622e5007ca9a';
+export const SKILL_UNIVERSAL_IDENTIFIER =
+  '70cf2f5e-7a3b-4b55-aaab-ae2f863b11d6';
