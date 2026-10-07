@@ -14,6 +14,12 @@ const callerClaims = (): { workspaceId: string; userId: string } => {
   return { workspaceId, userId };
 };
 
+/** Inside the function sandbox `localhost` can resolve to ::1 while Twenty listens on IPv4 only. */
+const twentyBaseUrl = (): string | undefined => {
+  const url = process.env.TWENTY_API_URL;
+  return url ? url.replace(/^(https?:\/\/)localhost(?=[:/]|$)/i, '$1127.0.0.1').replace(/\/$/, '') : undefined;
+};
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** Talks to the CRM Bee API as the signed-in member. */
@@ -24,7 +30,7 @@ const describe = (step: string, e: unknown): Error => {
 
 export const createBeeClient = async () => {
   const { workspaceId, userId } = callerClaims();
-  const members = await new RestApiClient().get<{ data?: { workspaceMembers?: Array<{ userEmail?: string }> } }>('/rest/workspaceMembers', {
+  const members = await new RestApiClient({ baseUrl: twentyBaseUrl() }).get<{ data?: { workspaceMembers?: Array<{ userEmail?: string }> } }>('/rest/workspaceMembers', {
     query: { filter: `userId[eq]:${userId}`, limit: 1 },
   }).catch((e) => { throw describe(`Twenty member lookup (${process.env.TWENTY_API_URL ?? 'no TWENTY_API_URL'})`, e); });
   const email = (members as { data?: { workspaceMembers?: Array<{ userEmail?: string }> } })?.data?.workspaceMembers?.[0]?.userEmail;
