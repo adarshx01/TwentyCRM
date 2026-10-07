@@ -4,8 +4,6 @@ ARG NODE_VERSION=22.20.0
 
 FROM node:${NODE_VERSION}-alpine AS base
 RUN npm install -g pnpm@11.22.0 && pnpm --version
-# msgpackr-extract (optional native speed-up for BullMQ) has a pure-JS fallback; do not fail the install on its skipped build script.
-ENV npm_config_strict_dep_builds=false
 WORKDIR /app
 
 FROM base AS deps
