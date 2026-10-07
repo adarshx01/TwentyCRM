@@ -21,3 +21,5 @@ export const VAR_TOKEN_UNIVERSAL_IDENTIFIER =
   'e55d1b95-8dae-48e6-aebf-622e5007ca9a';
 export const SKILL_UNIVERSAL_IDENTIFIER =
   '70cf2f5e-7a3b-4b55-aaab-ae2f863b11d6';
+export const VAR_TWENTY_URL_UNIVERSAL_IDENTIFIER =
+  'ddafb8c2-4334-4945-896e-5810deee88fa';

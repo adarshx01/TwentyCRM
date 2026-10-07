@@ -3,6 +3,7 @@ import { defineApplication } from 'twenty-sdk/define';
 import {
   APP_UNIVERSAL_IDENTIFIER,
   VAR_TOKEN_UNIVERSAL_IDENTIFIER,
+  VAR_TWENTY_URL_UNIVERSAL_IDENTIFIER,
   VAR_URL_UNIVERSAL_IDENTIFIER,
 } from 'src/constants/universal-identifiers';
 
@@ -16,6 +17,14 @@ export default defineApplication({
       label: 'Bee API URL',
       description: 'Base URL of the CRM Bee API, reachable from the Twenty server.',
       value: 'http://host.docker.internal:3400',
+      isSecret: false,
+      isRequired: true,
+    },
+    TWENTY_INTERNAL_URL: {
+      universalIdentifier: VAR_TWENTY_URL_UNIVERSAL_IDENTIFIER,
+      label: 'Twenty internal URL',
+      description: 'How the function runner reaches the Twenty server (the worker container cannot use localhost).',
+      value: 'http://server:3000',
       isSecret: false,
       isRequired: true,
     },

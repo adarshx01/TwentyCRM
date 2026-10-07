@@ -14,11 +14,8 @@ const callerClaims = (): { workspaceId: string; userId: string } => {
   return { workspaceId, userId };
 };
 
-/** Inside the function sandbox `localhost` can resolve to ::1 while Twenty listens on IPv4 only. */
-const twentyBaseUrl = (): string | undefined => {
-  const url = process.env.TWENTY_API_URL;
-  return url ? url.replace(/^(https?:\/\/)localhost(?=[:/]|$)/i, '$1127.0.0.1').replace(/\/$/, '') : undefined;
-};
+/** The function runs in the Twenty worker, where TWENTY_API_URL (localhost) is not reachable; use the configured internal URL. */
+const twentyBaseUrl = (): string | undefined => (process.env.TWENTY_INTERNAL_URL || process.env.TWENTY_API_URL)?.replace(/\/$/, '');
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
