@@ -60,7 +60,7 @@ limiter tests. Set `TEST_PG_ADMIN_URL` to reuse an existing server (CI service c
 
 ## Documentation
 
-- [Architecture & decisions](docs/architecture.md) · [Capacity & scaling](docs/capacity-and-scaling.md) · [Security](docs/security.md)
+- [Architecture & decisions](docs/architecture.md) · [Capacity & scaling](docs/capacity-and-scaling.md) · [Security](docs/security.md) · [Access architecture](docs/access-architecture.md)
 - [API](docs/api.md) · [`openapi.yaml`](docs/openapi.yaml)
 - [Deployment](docs/deployment.md) · [Operations & runbooks](docs/operations.md) · [Troubleshooting](docs/troubleshooting.md)
 - [Client onboarding checklist](docs/onboarding-checklist.md) · [Twenty field mapping](docs/twenty-mapping.md) · [Feasibility gates G1–G5](docs/feasibility-gates.md)

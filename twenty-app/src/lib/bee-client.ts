@@ -17,44 +17,51 @@ const callerClaims = (): { workspaceId: string; userId: string } => {
 /** The function runs in the Twenty worker, where TWENTY_API_URL (localhost) is not reachable; use the configured internal URL. */
 const twentyBaseUrl = (): string | undefined => (process.env.TWENTY_INTERNAL_URL || process.env.TWENTY_API_URL)?.replace(/\/$/, '');
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** Talks to the CRM Bee API as the signed-in member. */
 const describe = (step: string, e: unknown): Error => {
   const err = e as { message?: string; cause?: { code?: string; message?: string } };
   return new Error(`${step}: ${err?.message ?? e}${err?.cause ? ` (${err.cause.code ?? ''} ${err.cause.message ?? ''})` : ''}`);
 };
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Calls the CRM Bee API as the signed-in workspace member. Identity = (workspace id, member id) looked up from the
+ * Twenty-authenticated user; the tenant's own app secret proves the call comes from this workspace's app. Bee then
+ * requires the member to be LINKED to an active Bee user and applies that user's role and scope.
+ */
 export const createBeeClient = async () => {
   const { workspaceId, userId } = callerClaims();
-  const members = await new RestApiClient({ baseUrl: twentyBaseUrl() }).get<{ data?: { workspaceMembers?: Array<{ userEmail?: string }> } }>('/rest/workspaceMembers', {
+  const members = await new RestApiClient({ baseUrl: twentyBaseUrl() }).get<{ data?: { workspaceMembers?: Array<{ id?: string }> } }>('/rest/workspaceMembers', {
     query: { filter: `userId[eq]:${userId}`, limit: 1 },
-  }).catch((e) => { throw describe(`Twenty member lookup (${process.env.TWENTY_API_URL ?? 'no TWENTY_API_URL'})`, e); });
-  const email = (members as { data?: { workspaceMembers?: Array<{ userEmail?: string }> } })?.data?.workspaceMembers?.[0]?.userEmail;
-  if (!email) throw new Error('Could not identify your Twenty account.');
+  }).catch((e) => { throw describe(`Twenty member lookup (${twentyBaseUrl() ?? 'no URL'})`, e); });
+  const memberId = (members as { data?: { workspaceMembers?: Array<{ id?: string }> } })?.data?.workspaceMembers?.[0]?.id;
+  if (!memberId) throw new Error('Could not identify your Twenty account.');
 
   const base = (process.env.BEE_API_URL ?? '').replace(/\/$/, '');
   const token = process.env.BEE_CHAT_TOKEN ?? '';
-  if (!base || !token) throw new Error('CRM Bee is not configured (set BEE_API_URL and BEE_CHAT_TOKEN in the app settings).');
-  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
-  const who = { workspaceId, email };
+  if (!base || !token) throw new Error('CRM Bee is not configured for this workspace (BEE_API_URL / BEE_CHAT_TOKEN).');
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'x-bee-workspace': workspaceId, 'x-bee-member': memberId };
 
-  const request = async <T,>(path: string, init: RequestInit): Promise<T> => {
-    const res = await fetch(`${base}/v1/crm-chat/${path}`, init).catch((e) => { throw describe(`Bee request ${base}`, e); });
+  const request = async <T,>(method: string, path: string, body?: unknown): Promise<{ status: number; json: T }> => {
+    const res = await fetch(`${base}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) }).catch((e) => { throw describe(`Bee request ${base}`, e); });
     const text = await res.text();
     let json: unknown = null;
     try { json = text ? JSON.parse(text) : null; } catch { /* non-JSON */ }
-    if (!res.ok) throw new Error((json as { message?: string } | null)?.message ?? `Bee returned ${res.status}`);
-    return json as T;
+    return { status: res.status, json: json as T };
+  };
+  const must = async <T,>(method: string, path: string, body?: unknown): Promise<T> => {
+    const r = await request<T>(method, path, body);
+    if (r.status >= 400) throw new Error((r.json as { message?: string } | null)?.message ?? `Bee returned ${r.status}`);
+    return r.json;
   };
   const poll = async (after?: string): Promise<BeeMessage[]> =>
-    (await request<{ messages: BeeMessage[] }>(`messages?${new URLSearchParams({ ...who, ...(after ? { after } : {}) })}`, { method: 'GET', headers })).messages;
+    (await must<{ messages: BeeMessage[] }>('GET', `/v1/crm-chat/messages${after ? `?${new URLSearchParams({ after })}` : ''}`)).messages;
 
   /** Send, then wait for Bee's reply (it runs through a queue, so replies arrive asynchronously) until it goes quiet. */
-  const converse = async (send: (cursor?: string) => Promise<unknown>, maxMs = 50_000): Promise<BeeMessage[]> => {
+  const converse = async (send: () => Promise<unknown>, maxMs = 50_000): Promise<BeeMessage[]> => {
     const before = await poll();
     let cursor = before.length ? before[before.length - 1].id : undefined;
-    await send(cursor);
+    await send();
     const got: BeeMessage[] = [];
     const deadline = Date.now() + maxMs;
     let quietSince = 0;
@@ -68,7 +75,8 @@ export const createBeeClient = async () => {
   };
 
   return {
-    sendText: (text: string) => converse(() => request('send', { method: 'POST', headers, body: JSON.stringify({ ...who, text: text.slice(0, 4000) }) })),
-    pressButton: (id: string) => converse(() => request('button', { method: 'POST', headers, body: JSON.stringify({ ...who, id }) })),
+    sendText: (text: string) => converse(() => must('POST', '/v1/crm-chat/send', { text: text.slice(0, 4000) })),
+    /** Raw relay for the Bee pages (status + JSON are passed back to the page). */
+    request,
   };
 };

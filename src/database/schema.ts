@@ -22,7 +22,8 @@ const updatedAt = () => ts('updated_at').defaultNow().notNull();
 // TYPE DEFINITIONS
 // ──────────────────────────────────────────────────────────────
 
-export type UserRole = 'salesperson' | 'manager' | 'cxo' | 'client_admin' | 'platform_operator';
+/** Tenant roles only. Platform operators are a separate principal (platform_operators), never a users.role. */
+export type UserRole = 'salesperson' | 'manager' | 'cxo' | 'client_admin';
 
 export type DraftState =
   | 'collecting'
@@ -78,6 +79,11 @@ export interface TenantSettings {
   whatsappAccessTokenRef?: string;
   /** Teams channel reminders allowed only when every member is authorized (TM-04) */
   teamsChannelDigestAllowed?: boolean;
+  /**
+   * Bee's service user in the tenant's Twenty workspace (an Admin seat). Twenty only accepts member-role assignment and
+   * workspace settings from a user session, never from an API key; Bee signs in as this service identity for those.
+   */
+  twentyServiceUser?: { email: string; passwordRef: string };
 }
 
 export interface ProposedAction {
@@ -579,10 +585,82 @@ export const queueOutbox = pgTable('queue_outbox', {
   createdAt: createdAt(),
 }, (t) => ({ createdIdx: index('queue_outbox_created_idx').on(t.createdAt) }));
 
+// ──────────────────────────────────────────────────────────────
+// ACCESS CONTROL (§4, IAM-01..05, docs/access-architecture.md)
+// ──────────────────────────────────────────────────────────────
+
+/** Teams of a tenant. users.team_id / managed_team_ids hold team keys; a manager's scope is their ASSIGNED teams. */
+export const teams = pgTable('teams', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'restrict' }),
+  key: varchar('key', { length: 64 }).notNull(),
+  name: varchar('name', { length: 255 }).notNull(),
+  status: varchar('status', { length: 20 }).notNull().default('active'),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => ({ keyUq: unique('teams_tenant_key_uq').on(t.tenantId, t.key) }));
+
+/** A salesperson's "request archive" (§4). Nothing changes in the CRM until an authorized approver decides. */
+export const archiveRequests = pgTable('archive_requests', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'restrict' }),
+  requestedBy: uuid('requested_by').notNull().references(() => users.id, { onDelete: 'restrict' }),
+  targetType: varchar('target_type', { length: 20 }).$type<'person' | 'company' | 'opportunity'>().notNull(),
+  targetId: varchar('target_id', { length: 255 }).notNull(),
+  targetLabel: varchar('target_label', { length: 255 }).notNull(),
+  targetOwnerKey: varchar('target_owner_key', { length: 255 }),
+  targetTeamId: varchar('target_team_id', { length: 255 }),
+  reason: text('reason'),
+  /** pending → approved | rejected | cancelled */
+  state: varchar('state', { length: 20 }).notNull().default('pending'),
+  decidedBy: uuid('decided_by'),
+  decidedAt: ts('decided_at'),
+  decisionNote: text('decision_note'),
+  operationId: uuid('operation_id'),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => ({
+  tenantStateIdx: index('archive_requests_tenant_state_idx').on(t.tenantId, t.state),
+  onePending: uniqueIndex('archive_requests_one_pending_uq').on(t.tenantId, t.targetType, t.targetId).where(sql`state = 'pending'`),
+}));
+
+/** YlogX platform operators: named principals of the platform plane, never tenant users (§4). */
+export const platformOperators = pgTable('platform_operators', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  name: varchar('name', { length: 255 }).notNull(),
+  email: varchar('email', { length: 255 }).notNull().unique(),
+  /** sha256 of the operator's API key; the key itself is shown once at creation */
+  keyHash: varchar('key_hash', { length: 64 }).notNull().unique(),
+  status: varchar('status', { length: 20 }).notNull().default('active'),
+  createdBy: varchar('created_by', { length: 255 }).notNull(),
+  lastUsedAt: ts('last_used_at'),
+  createdAt: createdAt(),
+  revokedAt: ts('revoked_at'),
+});
+
+/**
+ * Support access (§4: "customer-data access only through explicitly authorized, audited support access").
+ * An operator requests, a client admin of THAT tenant approves; it expires automatically.
+ */
+export const supportGrants = pgTable('support_grants', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  tenantId: uuid('tenant_id').notNull().references(() => tenants.id, { onDelete: 'restrict' }),
+  operatorId: uuid('operator_id').notNull().references(() => platformOperators.id, { onDelete: 'restrict' }),
+  reason: text('reason').notNull(),
+  access: varchar('access', { length: 20 }).notNull().default('read'),
+  hours: integer('hours').notNull().default(4),
+  /** requested → active | denied; active → revoked | expired (computed from expires_at) */
+  state: varchar('state', { length: 20 }).notNull().default('requested'),
+  decidedBy: uuid('decided_by'),
+  decidedAt: ts('decided_at'),
+  expiresAt: ts('expires_at'),
+  createdAt: createdAt(),
+}, (t) => ({ tenantIdx: index('support_grants_tenant_idx').on(t.tenantId, t.state) }));
+
 /** Tables carrying tenant_id that must be protected by RLS (TEN-03). */
 export const RLS_TABLES = [
   'users', 'channel_bindings', 'enrollments', 'drafts', 'operations', 'idempotency_keys',
   'audit_log', 'schedules', 'delivery_state', 'intake_sources', 'intake_records',
   'mailbox_checkpoints', 'crm_index', 'stage_history', 'reconciliation_state',
-  'media_objects', 'usage_events',
+  'media_objects', 'usage_events', 'teams', 'archive_requests', 'support_grants',
 ] as const;

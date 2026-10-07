@@ -5,7 +5,7 @@ import { APP_CONFIG, type AppConfig } from '../config/configuration';
 import { DbService } from '../database/db.service';
 import { channelBindings, conversationSessions, drafts, enrollments, schedules, tenants, users } from '../database/schema';
 import { toTenantContext } from '../tenant/tenant.service';
-import type { ChannelName, TenantContext, UserContext } from '../common/types';
+import type { TenantContext, UserContext } from '../common/types';
 import { AuditService } from '../audit/audit.service';
 import { UserFacingError } from '../common/errors';
 
@@ -226,26 +226,22 @@ export class IdentityService {
   }
 
   /**
-   * Bind an in-CRM chat identity. The caller (the Bee app inside Twenty, authenticated by a shared secret) vouches for the
-   * Twenty workspace and the member's email; the user must already exist and be active in the tenant that owns that workspace.
+   * In-CRM chat / Bee pages: the caller is a Twenty workspace member, authenticated by Twenty and relayed by the
+   * tenant's own app secret. Only a member a client admin (or provisioning) LINKED to an active user resolves;
+   * an e-mail match is never enough (IAM-01).
    */
-  async bindTrusted(input: { twentyWorkspaceId: string; email: string; channel: ChannelName; connectionId: string; externalId: string }): Promise<{ tenantId: string; userId: string } | null> {
-    const email = input.email.trim().toLowerCase();
-    const row = await this.db.systemTx(async (tx) => {
-      const [r] = await tx
-        .select({ tenantId: tenants.id, userId: users.id })
-        .from(tenants)
-        .innerJoin(users, eq(users.tenantId, tenants.id))
-        .where(and(eq(tenants.twentyWorkspaceId, input.twentyWorkspaceId), eq(tenants.status, 'active'), sql`lower(${users.email}) = ${email}`, eq(users.status, 'active'), isNull(users.revokedAt)))
-        .limit(1);
-      if (!r) return null;
-      await tx
-        .insert(channelBindings)
-        .values({ tenantId: r.tenantId, userId: r.userId, channel: input.channel, connectionId: input.connectionId, externalId: input.externalId, enrolledBy: null, lastInboundAt: new Date() })
-        .onConflictDoUpdate({ target: [channelBindings.channel, channelBindings.connectionId, channelBindings.externalId, channelBindings.tenantId], set: { userId: r.userId, status: 'active', optedOut: false } });
-      return r;
-    });
-    return row;
+  async resolveTwentyMember(tenantId: string, memberId: string): Promise<{ user: UserContext; tenant: TenantContext } | null> {
+    const [r] = await this.db.tenantTx(tenantId, (tx) => tx.select({ id: users.id }).from(users).where(and(eq(users.tenantId, tenantId), eq(users.twentyMemberId, memberId))));
+    return r ? this.getActiveUser(tenantId, r.id) : null;
+  }
+
+  /** Channel binding for the in-CRM chat so the normal conversation pipeline applies (one per tenant + member). */
+  async bindTwentyMember(tenantId: string, userId: string, externalId: string): Promise<void> {
+    await this.db.tenantTx(tenantId, (tx) =>
+      tx.insert(channelBindings)
+        .values({ tenantId, userId, channel: 'web', connectionId: 'web', externalId, enrolledBy: null, lastInboundAt: new Date() })
+        .onConflictDoUpdate({ target: [channelBindings.channel, channelBindings.connectionId, channelBindings.externalId, channelBindings.tenantId], set: { userId, status: 'active', optedOut: false } }),
+    );
   }
 
   // ── Revocation (IAM-05) ─────────────────────────────────────

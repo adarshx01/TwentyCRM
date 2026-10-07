@@ -26,7 +26,7 @@ describe('scoped reports and pipeline totals (SUM-01..03, AT-12, SYNC-03)', () =
     ] });
     reports = env.get(ReportsService); db = env.get(DbService);
     // Known fixture: Sam has 130 open opportunities (> 2 pages of 60): 100 INR @ 1,000 and 30 USD @ 2,000, spread over stages.
-    const own = (k: string, team: string) => ({ beeOwnerMemberId: T.users[k].memberId, beeTeamId: team });
+    const own = (k: string, team: string) => ({ beeOwnerMemberId: T.users[k].ownerKey, beeTeamId: team });
     const opps: any[] = [];
     const stages = ['NEW', 'QUALIFIED', 'MEETING', 'PROPOSAL'];
     for (let i = 0; i < 100; i++) opps.push({ name: `Sam INR ${i}`, stage: stages[i % 4], amount: { amountMicros: 1_000_000_000, currencyCode: 'INR' }, ...own('sam', 'team-a') });
@@ -118,9 +118,9 @@ describe('scoped reports and pipeline totals (SUM-01..03, AT-12, SYNC-03)', () =
     const comp = crypto.randomUUID(); const person = crypto.randomUUID(); const oppA = crypto.randomUUID(); const oppB = crypto.randomUUID();
     const noteA = crypto.randomUUID(); const noteB = crypto.randomUUID();
     await seedRecords(env, 'report-co', {
-      companies: [{ id: comp, name: 'Shared Corp', beeOwnerMemberId: T.users.cxo.memberId }],
-      opportunities: [{ id: oppA, name: 'Shared deal A', stage: 'PROPOSAL', companyId: comp, amount: { amountMicros: 2_000_000_000, currencyCode: 'INR' }, beeOwnerMemberId: T.users.sam.memberId, beeTeamId: 'team-a' }, { id: oppB, name: 'Shared deal B', stage: 'MEETING', companyId: comp, beeOwnerMemberId: T.users.meera.memberId, beeTeamId: 'team-b' }],
-      notes: [{ id: noteA, title: 'a', bodyV2: { markdown: 'Sam private note' }, beeOwnerMemberId: T.users.sam.memberId }, { id: noteB, title: 'b', bodyV2: { markdown: 'Meera private note' }, beeOwnerMemberId: T.users.meera.memberId }],
+      companies: [{ id: comp, name: 'Shared Corp', beeOwnerMemberId: T.users.cxo.ownerKey }],
+      opportunities: [{ id: oppA, name: 'Shared deal A', stage: 'PROPOSAL', companyId: comp, amount: { amountMicros: 2_000_000_000, currencyCode: 'INR' }, beeOwnerMemberId: T.users.sam.ownerKey, beeTeamId: 'team-a' }, { id: oppB, name: 'Shared deal B', stage: 'MEETING', companyId: comp, beeOwnerMemberId: T.users.meera.ownerKey, beeTeamId: 'team-b' }],
+      notes: [{ id: noteA, title: 'a', bodyV2: { markdown: 'Sam private note' }, beeOwnerMemberId: T.users.sam.ownerKey }, { id: noteB, title: 'b', bodyV2: { markdown: 'Meera private note' }, beeOwnerMemberId: T.users.meera.ownerKey }],
       noteTargets: [{ noteId: noteA, targetCompanyId: comp }, { noteId: noteB, targetCompanyId: comp }],
     });
     // Sam can see the company only if it is in his scope: it is owned by the CXO, so Sam gets nothing — and no leak.
@@ -128,7 +128,7 @@ describe('scoped reports and pipeline totals (SUM-01..03, AT-12, SYNC-03)', () =
     const cxo = await run('company_summary', 'cxo', 'Shared Corp');
     expect(cxo).toContain('Open opportunities: 2'); expect(cxo).toContain('Sam private note'); expect(cxo).toContain('Meera private note');
     // owning the company but not the sibling records: only own opportunities and notes
-    await ws.all('companies').find((c: any) => c.id === comp) && (ws.all('companies').find((c: any) => c.id === comp).beeOwnerMemberId = T.users.sam.memberId);
+    await ws.all('companies').find((c: any) => c.id === comp) && (ws.all('companies').find((c: any) => c.id === comp).beeOwnerMemberId = T.users.sam.ownerKey);
     const sam = await run('company_summary', 'sam', 'Shared Corp');
     expect(sam).toContain('Open opportunities: 1'); expect(sam).toContain('Sam private note'); expect(sam).not.toContain('Meera private note'); expect(sam).not.toContain('Shared deal B');
   });

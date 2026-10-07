@@ -21,7 +21,7 @@ describe('record operations, confirmation and authorization (AT-02, AT-05, AT-06
       { key: 'cxo', displayName: 'Chris CXO', role: 'cxo', phone: CXO },
       { key: 'noel', displayName: 'Noel Newbie', role: 'salesperson', phone: NOEL, teamId: 'team-a' },
     ] });
-    const own = (k: string, team: string) => ({ beeOwnerMemberId: T.users[k].memberId, beeTeamId: team });
+    const own = (k: string, team: string) => ({ beeOwnerMemberId: T.users[k].ownerKey, beeTeamId: team });
     compSam = crypto.randomUUID();
     personSam = crypto.randomUUID(); personMeera = crypto.randomUUID(); oppSam = crypto.randomUUID(); oppMeera = crypto.randomUUID();
     ws = await seedRecords(env, 'ops-co', {
@@ -94,7 +94,7 @@ describe('record operations, confirmation and authorization (AT-02, AT-05, AT-06
     expect(preview).toContain('date only');
     await confirmLast(env, T, 'sam');
     const task = ws.all('tasks').find((t: any) => t.title === 'Follow up with Rajesh');
-    expect(task).toMatchObject({ beeHasTime: false, beeDueDate: '2026-10-06', beeOwnerMemberId: T.users.sam.memberId });
+    expect(task).toMatchObject({ beeHasTime: false, beeDueDate: '2026-10-06', beeOwnerMemberId: T.users.sam.ownerKey });
   });
 
   it('a salesperson cannot reassign or archive; they are told who can (Section 4)', async () => {
@@ -121,8 +121,8 @@ describe('record operations, confirmation and authorization (AT-02, AT-05, AT-06
     expect(preview).toContain('Noel Newbie');
     expect(preview).toMatch(/1 open task/);
     await confirmLast(env, T, 'mgr');
-    expect(ws.all('opportunities').find((o: any) => o.id === oppSam).beeOwnerMemberId).toBe(T.users.noel.memberId);
-    expect(ws.all('tasks').find((t: any) => t.title === 'Follow up with Rajesh').beeOwnerMemberId).toBe(T.users.noel.memberId);
+    expect(ws.all('opportunities').find((o: any) => o.id === oppSam).beeOwnerMemberId).toBe(T.users.noel.ownerKey);
+    expect(ws.all('tasks').find((t: any) => t.title === 'Follow up with Rajesh').beeOwnerMemberId).toBe(T.users.noel.ownerKey);
   });
 
   it('manager cannot assign outside their teams (Meera is in team-b)', async () => {

@@ -81,12 +81,12 @@ describe('contact-form email intake (§16–18, AT-16..AT-22)', () => {
     expect(counts(wsA)).toEqual({ people: 1, companies: 1, opps: 1, notes: 1, tasks: 1 });
     expect(counts(wsB)).toEqual({ people: 0, companies: 0, opps: 0, notes: 0, tasks: 0 }); // no cross-tenant effect
     const [p] = wsA.all('people'); const [o] = wsA.all('opportunities'); const [t] = wsA.all('tasks'); const [n] = wsA.all('notes');
-    expect(p).toMatchObject({ name: { firstName: 'Priya', lastName: 'Sharma' }, beePhoneE164: '+919876543210', beeOwnerMemberId: A.users.olivia.memberId });
+    expect(p).toMatchObject({ name: { firstName: 'Priya', lastName: 'Sharma' }, beePhoneE164: '+919876543210', beeOwnerMemberId: A.users.olivia.ownerKey });
     expect(p.emails.primaryEmail).toBe('priya@zen.example');
     expect(o).toMatchObject({ name: 'Priya Sharma — Zen Foods', stage: 'NEW', beeSource: 'email', pointOfContactId: p.id });
     expect(n.bodyV2.markdown).toContain('Need a quote for 500 units');
     expect(n.bodyV2.markdown).toContain('Contact us');
-    expect(t).toMatchObject({ beeTaskKind: 'follow_up', beeOwnerMemberId: A.users.olivia.memberId });
+    expect(t).toMatchObject({ beeTaskKind: 'follow_up', beeOwnerMemberId: A.users.olivia.ownerKey });
     expect(t.beeDueDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(done.timestamps).toMatchObject({ received: expect.any(String), parsed: expect.any(String), saved: expect.any(String) });
     expect(done.parserVersion).toBe('v1');
@@ -181,8 +181,8 @@ describe('contact-form email intake (§16–18, AT-16..AT-22)', () => {
     expect(missing.state).toBe('review'); expect(missing.reviewReason).toMatch(/missing required: email|not enough contact/);
     // conflicting duplicates: email → person X, phone → person Y
     await seedRecords(env, 'intake-a', { people: [
-      { name: { firstName: 'Ann', lastName: 'One' }, emails: { primaryEmail: 'ann@x.example' }, beePhoneE164: '+919000000001', beeOwnerMemberId: A.users.olivia.memberId },
-      { name: { firstName: 'Bob', lastName: 'Two' }, emails: { primaryEmail: 'bob@x.example' }, beePhoneE164: '+919000000002', beeOwnerMemberId: A.users.ravi.memberId },
+      { name: { firstName: 'Ann', lastName: 'One' }, emails: { primaryEmail: 'ann@x.example' }, beePhoneE164: '+919000000001', beeOwnerMemberId: A.users.olivia.ownerKey },
+      { name: { firstName: 'Bob', lastName: 'Two' }, emails: { primaryEmail: 'bob@x.example' }, beePhoneE164: '+919000000002', beeOwnerMemberId: A.users.ravi.ownerKey },
     ] });
     const conflict = await run(A.tenantId, (await send(ALIAS_A, rawMail({ text: formBody({ name: 'Mixed Up', email: 'ann@x.example', phone: '+91 90000 00002', message: 'Which of you am I?' }) }))).recordId!);
     expect(conflict.state).toBe('review'); expect(conflict.reviewReason).toMatch(/different existing contacts/);
@@ -193,8 +193,11 @@ describe('contact-form email intake (§16–18, AT-16..AT-22)', () => {
     await expect(intake.approve(A.tenantId, missing.id, { id: 'sam', role: 'salesperson' })).rejects.toThrow(/Only managers, CXOs or administrators/);
     expect((await rec(missing.id)).state).toBe('review');
     // manager corrects and approves — twice (double click): one operation, one set of records
-    const fixed = await intake.approve(A.tenantId, missing.id, { id: 'mo', role: 'manager' }, { email: 'later@x.example' });
-    await intake.approve(A.tenantId, missing.id, { id: 'mo', role: 'manager' }, { email: 'later@x.example' });
+    const mo = { id: A.users.mgr.id, role: 'manager' as const, managedTeamIds: ['team-a'] };
+    // a manager of ANOTHER team cannot see or approve it (scoped review, IN-10/IN-11)
+    await expect(intake.approve(A.tenantId, missing.id, { id: 'other-mgr', role: 'manager', managedTeamIds: ['team-z'] })).rejects.toThrow(/not found/i);
+    const fixed = await intake.approve(A.tenantId, missing.id, mo, { email: 'later@x.example' });
+    await intake.approve(A.tenantId, missing.id, mo, { email: 'later@x.example' });
     expect(fixed.state).toBe('committing');
     const ops1 = await db.tenantTx(A.tenantId, (tx) => tx.select().from(operations).where(eq(operations.idempotencyKey, `intake:${missing.id}`)));
     expect(ops1).toHaveLength(1);
@@ -202,7 +205,7 @@ describe('contact-form email intake (§16–18, AT-16..AT-22)', () => {
     expect(counts(wsA)).toMatchObject({ opps: 1 });
     expect(wsA.all('people').find((p: any) => p.emails?.primaryEmail === 'later@x.example')).toBeTruthy();
     // rejection creates no sales opportunity
-    const rejected = await intake.reject(A.tenantId, conflict.id, { id: 'mo', role: 'manager' });
+    const rejected = await intake.reject(A.tenantId, conflict.id, mo);
     expect(rejected.state).toBe('rejected');
     expect(counts(wsA).opps).toBe(1);
     await expect(intake.reject(A.tenantId, conflict.id, { id: 'sam', role: 'salesperson' })).rejects.toThrow();
@@ -213,11 +216,16 @@ describe('contact-form email intake (§16–18, AT-16..AT-22)', () => {
     expect(r.state).toBe('review'); expect(r.reviewReason).toMatch(/review mode/);
     const item = wsA.all('intakeReviews')[0];
     expect(item.beeStatus).toBe('pending');
-    item.beeStatus = 'approved'; item.beeReviewedBy = 'ada';
+    // A decision by a Twenty member who is not linked to an authorized Bee user is ignored (and audited).
+    item.beeStatus = 'approved'; item.beeReviewedBy = 'm-somebody-unlinked';
+    expect(await intake.pollTwentyReviews(A.tenantId)).toBe(0);
+    expect((await rec(r.id)).state).toBe('review');
+    // The linked client admin's decision in Twenty counts, with HER identity.
+    item.beeReviewedBy = A.users.admin.memberId;
     expect(await intake.pollTwentyReviews(A.tenantId)).toBe(1);
     expect(await intake.pollTwentyReviews(A.tenantId)).toBe(0); // idempotent
     const after = await rec(r.id);
-    expect(after.state).toBe('committing'); expect(after.reviewedBy).toBe('twenty:ada');
+    expect(after.state).toBe('committing'); expect(after.reviewedBy).toBe(A.users.admin.id);
     await journal.execute(A.tenantId, after.operationId!, 'w');
     expect(counts(wsA)).toMatchObject({ people: 1, opps: 1 });
   });

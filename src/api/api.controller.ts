@@ -1,8 +1,7 @@
-import { Body, Controller, Get, Headers, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post, Query, UseGuards, BadRequestException } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, NotFoundException, Param, ParseUUIDPipe, Post, Query, BadRequestException } from '@nestjs/common';
 import { z } from 'zod';
-import { CurrentActor, Roles } from '../common/decorators';
+import { CurrentActor, RequirePermission } from '../common/decorators';
 import type { Actor } from '../common/guards/auth.guard';
-import { RolesGuard } from '../common/guards/roles.guard';
 import { ConfirmationService } from '../conversation/confirmation.service';
 import { ConversationService } from '../conversation/conversation.service';
 import { DraftService } from '../conversation/draft.service';
@@ -10,6 +9,7 @@ import { OperationJournal } from '../crm/operations/operation-journal.service';
 import { OperationEffects } from '../crm/operations/operation-effects.service';
 import { IntakeService } from '../intake/intake.service';
 import type { DraftData } from '../conversation/draft.types';
+import { can } from '../access/permissions';
 
 const ConfirmBody = z.object({ version: z.number().int().positive(), hash: z.string().regex(/^[0-9a-f]{8,64}$/) }).strict();
 const EditBody = z.object({ text: z.string().min(1).max(2000) }).strict();
@@ -20,7 +20,6 @@ const ApproveBody = z.object({ corrections: z.object({ name: z.string().max(200)
  * never taken from the request body or URL. Cross-tenant IDs resolve to 404 (RLS + tenant scoping).
  */
 @Controller()
-@UseGuards(RolesGuard)
 export class ApiController {
   constructor(
     private readonly confirmation: ConfirmationService,
@@ -70,31 +69,33 @@ export class ApiController {
   async operation(@CurrentActor() a: Actor, @Param('id', ParseUUIDPipe) id: string) {
     const op = await this.journal.get(a.tenant.tenantId, id);
     // Employees see their own operations; CXOs and client admins see the workspace's (scoped progress, safe errors only).
-    if (!op || (op.userId !== a.user.userId && !['cxo', 'client_admin'].includes(a.user.role))) throw new NotFoundException('Operation not found');
+    if (!op || (op.userId !== a.user.userId && !can(a.user.role, 'operations.read.all'))) throw new NotFoundException('Operation not found');
     const p = OperationJournal.describeProgress(op);
     return { id: op.id, reference: OperationEffects.reference(op.id), type: op.type, state: op.state, saved: p.saved, pending: p.pending, failed: p.failed, result: op.state === 'committed' ? op.result : undefined, error: op.state === 'failed' || op.state === 'needs_repair' ? { message: (op.errorInfo as any)?.message ?? 'The operation could not be completed.' } : undefined, createdAt: op.createdAt, updatedAt: op.updatedAt };
   }
 
   // ── intake review (IN-11) ───────────────────────────────────
-  @Get('intake/review') @Roles('manager')
+  @Get('intake/review') @RequirePermission('intake.review')
   async listReview(@CurrentActor() a: Actor, @Query('state') state?: string) {
-    const rows = await this.intake.listReview(a.tenant.tenantId, state === 'failed' ? 'failed' : 'review');
+    const rows = await this.intake.listReview(a.tenant.tenantId, state === 'failed' ? 'failed' : 'review', reviewer(a));
     return rows.map((r) => ({ id: r.id, state: r.state, reason: r.reviewReason, sourceId: r.sourceId, fields: sanitizeFields(r.parsedFields), receivedAt: r.createdAt }));
   }
 
-  @Post('intake/review/:id/approve') @Roles('manager') @HttpCode(200)
+  @Post('intake/review/:id/approve') @RequirePermission('intake.review') @HttpCode(200)
   async approve(@CurrentActor() a: Actor, @Param('id', ParseUUIDPipe) id: string, @Body() body: unknown) {
     const b = ApproveBody.parse(body ?? {});
-    const r = await this.intake.approve(a.tenant.tenantId, id, { id: a.user.userId, role: a.user.role }, b.corrections ?? {});
+    const r = await this.intake.approve(a.tenant.tenantId, id, reviewer(a), b.corrections ?? {});
     return { id: r.id, state: r.state, operationId: r.operationId };
   }
 
-  @Post('intake/review/:id/reject') @Roles('manager') @HttpCode(200)
+  @Post('intake/review/:id/reject') @RequirePermission('intake.review') @HttpCode(200)
   async reject(@CurrentActor() a: Actor, @Param('id', ParseUUIDPipe) id: string) {
-    const r = await this.intake.reject(a.tenant.tenantId, id, { id: a.user.userId, role: a.user.role });
+    const r = await this.intake.reject(a.tenant.tenantId, id, reviewer(a));
     return { id: r.id, state: r.state };
   }
 }
+
+const reviewer = (a: Actor) => ({ id: a.user.userId, role: a.user.role, managedTeamIds: a.user.managedTeamIds });
 
 function sanitizeFields(f: unknown): Record<string, unknown> {
   const { _meta, _fingerprint, ...rest } = (f ?? {}) as Record<string, unknown>;

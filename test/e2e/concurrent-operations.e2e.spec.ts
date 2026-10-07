@@ -43,7 +43,7 @@ describe('concurrency, protection of Twenty, and fairness (ACT-03, SYNC-04, TEN-
     expect(mine).toHaveLength(11);
     for (let i = 1; i <= 11; i++) {
       const p = mine.find((x: any) => x.name.lastName === String(i)) ?? mine.find((x: any) => x.name.firstName === 'Parallel' && x.emails.primaryEmail === `p${i}@x.example`);
-      expect(p.beeOwnerMemberId).toBe(A.users[`u${i}`].memberId);
+      expect(p.beeOwnerMemberId).toBe(A.users[`u${i}`].ownerKey);
     }
     expect(wsB.all('people')).toHaveLength(0);
   });

@@ -62,7 +62,7 @@ describe('duplicates, ambiguity and media handling during capture (AT-05, AT-07,
   });
 
   it('matches in other users\' records are never revealed — only that a match exists (Section 4)', async () => {
-    await seedRecords(env, 'edge-co', { people: [{ name: { firstName: 'Secret', lastName: 'Person' }, emails: { primaryEmail: 'secret@hidden.example' }, beePhoneE164: '+919222222222', beeOwnerMemberId: T.users.meera.memberId, beeTeamId: 'b' }] });
+    await seedRecords(env, 'edge-co', { people: [{ name: { firstName: 'Secret', lastName: 'Person' }, emails: { primaryEmail: 'secret@hidden.example' }, beePhoneE164: '+919222222222', beeOwnerMemberId: T.users.meera.ownerKey, beeTeamId: 'b' }] });
     card('hidden', { name: 'Someone Else', company: 'Hidden Co', phones: ['+91 92222 22222'], email: 'secret@hidden.example' });
     env.whatsapp.clear();
     await upload('hidden'); await waitText(/continue without|Add context/i);

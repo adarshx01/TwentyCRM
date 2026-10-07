@@ -5,7 +5,11 @@
   "twenty": {
     "workspaceId": "b9a619b9-1da7-458a-b645-d695a8c0983c",
     "baseUrl": "http://localhost:3000",
-    "apiTokenRef": "env:TWENTY_API_KEY"
+    "apiTokenRef": "env:TWENTY_API_KEY",
+    "serviceUser": {
+      "email": "bee-service@crmbee.local",
+      "passwordRef": "env:TWENTY_SERVICE_PASSWORD"
+    }
   },
   "timezone": "Asia/Kolkata",
   "workingDays": [
@@ -53,11 +57,21 @@
       }
     ]
   },
+  "teams": [
+    {
+      "key": "north",
+      "name": "North"
+    },
+    {
+      "key": "south",
+      "name": "South"
+    }
+  ],
   "users": [
     {
       "displayName": "Workspace Admin",
       "email": "admin@crmbee.local",
-      "role": "cxo",
+      "role": "client_admin",
       "preferredReminderChannel": "web"
     },
     {

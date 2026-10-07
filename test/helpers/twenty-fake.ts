@@ -12,7 +12,7 @@ type Rec = Record<string, any>;
 
 const SINGULAR: Record<string, string> = {
   people: 'person', companies: 'company', opportunities: 'opportunity', notes: 'note', tasks: 'task',
-  noteTargets: 'noteTarget', taskTargets: 'taskTarget', intakeReviews: 'intakeReview',
+  noteTargets: 'noteTarget', taskTargets: 'taskTarget', intakeReviews: 'intakeReview', workspaceMembers: 'workspaceMember',
 };
 const STANDARD: Record<string, string[]> = {
   person: ['name', 'emails', 'phones', 'jobTitle', 'companyId', 'city'],
@@ -23,6 +23,7 @@ const STANDARD: Record<string, string[]> = {
   noteTarget: ['noteId', 'targetPersonId', 'targetCompanyId', 'targetOpportunityId'],
   taskTarget: ['taskId', 'targetPersonId', 'targetCompanyId', 'targetOpportunityId'],
   intakeReview: ['name'],
+  workspaceMember: ['name', 'userEmail', 'userId'],
 };
 
 export interface Injection {

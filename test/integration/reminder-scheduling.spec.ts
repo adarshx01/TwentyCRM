@@ -15,7 +15,7 @@ import { QueueService } from '../../src/queue/queue.service';
 describe('morning digests: scheduling, dispatch, delivery (REM-*, AT-08, AT-09, AT-10)', () => {
   let env: TestEnv; let T: SeededTenant; let db: DbService; let planner: SchedulePlanner; let scheduler: SchedulerService; let digest: DigestService; let outbound: OutboundService; let ws: any;
   const NOW = new Date('2026-09-28T02:00:00Z'); // Mon 07:30 IST, 22:00 Sun in New York
-  const own = (k: string) => ({ beeOwnerMemberId: T.users[k].memberId, beeTeamId: 'team-a' });
+  const own = (k: string) => ({ beeOwnerMemberId: T.users[k].ownerKey, beeTeamId: 'team-a' });
 
   beforeAll(async () => {
     env = await createTestEnv();
@@ -152,12 +152,13 @@ describe('morning digests: scheduling, dispatch, delivery (REM-*, AT-08, AT-09, 
     const today = DateTime.now().setZone('Asia/Kolkata').toISODate()!;
     const at = DateTime.fromISO(`${today}T08:00`, { zone: 'Asia/Kolkata' }).toJSDate();
     await planner.ensureDigest(T.tenantId, T.users.sam.id, today, at);
+    await makeDue(); // due a minute ago, whatever the wall-clock time of the test run (cutoff is relative to now)
     let [s] = await rows();
     expect(await digest.dispatch(T.tenantId, s.id)).toBe('skipped_empty');
     expect((await rows())[0]).toMatchObject({ state: 'skipped' });
 
     await db.systemTx((tx) => tx.execute(sql`delete from schedules`));
-    await planner.ensureDigest(T.tenantId, T.users.sam.id, today, at); [s] = await rows();
+    await planner.ensureDigest(T.tenantId, T.users.sam.id, today, at); await makeDue(); [s] = await rows();
     await db.systemTx((tx) => tx.execute(sql`update users set status = 'revoked', revoked_at = now() where id = ${T.users.sam.id}`));
     expect(await digest.dispatch(T.tenantId, s.id)).toBe('skipped_ineligible');
 
@@ -173,6 +174,7 @@ describe('morning digests: scheduling, dispatch, delivery (REM-*, AT-08, AT-09, 
       const today = DateTime.now().setZone('Asia/Kolkata').toISODate()!;
       await seedRecords(env, 'digest-co', { tasks: [task({ title: 'Call back', beeDueDate: today, dueAt: DateTime.fromISO(`${today}T00:00`, { zone: 'Asia/Kolkata' }).toUTC().toISO(), ...own('sam') })] });
       await planner.ensureDigest(T.tenantId, T.users.sam.id, today, DateTime.fromISO(`${today}T08:00`, { zone: 'Asia/Kolkata' }).toJSDate());
+      await makeDue(); // clock-independent: due now, inside the morning cutoff
       const [s] = await rows();
       return s;
     }
@@ -248,7 +250,7 @@ describe('morning digests: scheduling, dispatch, delivery (REM-*, AT-08, AT-09, 
     // the user completes one task and a manager reassigns another in the Twenty UI
     const t = ws.data.tasks;
     t[1].beeStatus = 'done'; t[1].status = 'DONE'; t[1].updatedAt = new Date(Date.now() + 1000).toISOString();
-    t[2].beeOwnerMemberId = T.users.maya.memberId; t[2].updatedAt = new Date(Date.now() + 1000).toISOString();
+    t[2].beeOwnerMemberId = T.users.maya.ownerKey; t[2].updatedAt = new Date(Date.now() + 1000).toISOString();
     await makeDue(s.id);
     expect(await digest.dispatch(T.tenantId, s.id)).toBe('dispatched');
     await deliverAll();

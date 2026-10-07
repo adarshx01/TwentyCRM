@@ -30,7 +30,7 @@ import { enrichContext } from '../common/context/request-context';
 import { CRM_ADAPTER, type CrmAdapter } from '../crm/crm-adapter.interface';
 import { AuditService } from '../audit/audit.service';
 import { IntakeService } from '../intake/intake.service';
-import { isRoleSufficient } from '../common/guards/roles.guard';
+import { can } from '../access/permissions';
 import { getLogger } from '../observability/logger';
 import { M } from '../observability/metrics';
 
@@ -40,6 +40,8 @@ const HARD_CANCEL = /^(cancel|discard|abort)[.! ]*$/i;
 const EDIT = /^edit[.! ]*$/i;
 const HELP = /^(help|\?|menu|hi|hello|hey|start)[.! ]*$/i;
 const ENROLL = /^(?:enrol(?:l)?\s+)?(BEE-[A-Z0-9]{4}-[A-Z0-9]{4})\s*$/i;
+
+const reviewerOf = (u: UserContext) => ({ id: u.userId, role: u.role, managedTeamIds: u.managedTeamIds });
 
 export const HELP_TEXT = [
   '*What I can do*',
@@ -447,18 +449,18 @@ export class ConversationService {
   }
 
   private async handleIntakeReview(ctx: Ctx, cmd: 'list' | RegExpExecArray): Promise<void> {
-    if (!isRoleSufficient(ctx.user.role, 'manager')) return ctx.say('Only managers, CXOs and administrators can review website enquiries.');
+    if (!can(ctx.user.role, 'intake.review')) return ctx.say('Only managers, CXOs and administrators can review website enquiries.');
     if (cmd === 'list') {
-      const items = await this.intake.listReview(ctx.tenant.tenantId);
+      const items = await this.intake.listReview(ctx.tenant.tenantId, 'review', reviewerOf(ctx.user));
       if (!items.length) return ctx.say('No website enquiries are waiting for review.');
       return ctx.say(['*Enquiries waiting for review*', ...items.slice(0, 10).map((r) => { const f = (r.parsedFields ?? {}) as any; return `• ${r.id.slice(0, 8)} — ${f.name ?? f.company ?? 'visitor'}${f.company && f.name ? ` (${f.company})` : ''}: ${r.reviewReason ?? 'review'}`; }), 'Reply "approve <id>" to preview and save, or "reject <id>".'].join('\n'));
     }
     const [, verb, prefix] = cmd;
-    const items = (await this.intake.listReview(ctx.tenant.tenantId)).filter((r) => r.id.startsWith(prefix.toLowerCase()));
+    const items = (await this.intake.listReview(ctx.tenant.tenantId, 'review', reviewerOf(ctx.user))).filter((r) => r.id.startsWith(prefix.toLowerCase()));
     if (items.length !== 1) return ctx.say(items.length ? 'That id is ambiguous; please use more characters.' : "I couldn't find that enquiry in the review queue.");
     const rec = items[0];
     if (verb.toLowerCase() === 'reject') {
-      await this.intake.reject(ctx.tenant.tenantId, rec.id, { id: ctx.user.userId, role: ctx.user.role });
+      await this.intake.reject(ctx.tenant.tenantId, rec.id, reviewerOf(ctx.user));
       return ctx.say(`Rejected enquiry ${rec.id.slice(0, 8)}. No opportunity was created.`);
     }
     let action = (rec.proposedActions ?? [])[0] as any;

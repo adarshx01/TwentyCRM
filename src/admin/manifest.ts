@@ -42,7 +42,13 @@ export const TenantManifestSchema = z.object({
   slug: z.string().regex(/^[a-z0-9][a-z0-9-]{1,61}$/),
   name: z.string().min(1).max(255),
   deploymentId: z.string().default('shared_01'),
-  twenty: z.object({ workspaceId: z.string().min(1), baseUrl: z.string().url().optional(), apiTokenRef: z.string().regex(/^(env|file|gcp-sm):/, 'use a secret reference such as env:NAME or gcp-sm:projects/…'), webhookSecretRef: z.string().regex(/^(env|file|gcp-sm):/).optional() }).strict(),
+  twenty: z.object({
+    workspaceId: z.string().min(1), baseUrl: z.string().url().optional(),
+    apiTokenRef: z.string().regex(/^(env|file|gcp-sm):/, 'use a secret reference such as env:NAME or gcp-sm:projects/…'),
+    webhookSecretRef: z.string().regex(/^(env|file|gcp-sm):/).optional(),
+    /** Bee service user (Admin seat) used for member roles and workspace settings, which Twenty refuses to API keys */
+    serviceUser: z.object({ email: z.string().email(), passwordRef: z.string().regex(/^(env|file|gcp-sm):/) }).strict().optional(),
+  }).strict(),
   timezone: z.string().default('UTC').refine((z) => { try { new Intl.DateTimeFormat('en', { timeZone: z }); return true; } catch { return false; } }, 'unknown IANA timezone'),
   workingDays: z.array(z.number().int().min(1).max(7)).default([1, 2, 3, 4, 5]),
   morningReminderTime: z.string().regex(/^\d{2}:\d{2}$/).default('09:00'),
@@ -55,6 +61,8 @@ export const TenantManifestSchema = z.object({
   channels: z.object({ whatsapp: z.object({ accessTokenRef: z.string().regex(/^(env|file|gcp-sm):/) }).strict().optional() }).strict().optional(),
   quotas: z.object({ maxUploadsPerMinute: z.number().optional(), maxRemindersPerMinute: z.number().optional(), maxMessagesPerMinute: z.number().optional(), maxAiJobsInFlight: z.number().optional() }).optional(),
   retention: z.object({ draftExpirySeconds: z.number().optional(), mediaRetentionDays: z.number().optional(), auditRetentionDays: z.number().optional(), rawEmailRetentionDays: z.number().optional(), reviewRetentionDays: z.number().optional() }).optional(),
+  /** Teams of the client (CFG-03). Team keys referenced by users are created automatically. */
+  teams: z.array(z.object({ key: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/), name: z.string().min(1).max(255) }).strict()).default([]),
   users: z.array(UserSpec).default([]),
   intakeSources: z.array(IntakeSpec).default([]),
 }).strict().superRefine((m, ctx) => {

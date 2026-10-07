@@ -8,7 +8,7 @@ import {
   type CompanyInput, type CompanyQuery, type CrmAdapter, type CrmCompany, type CrmEntity, type CrmNote,
   type CrmOpportunity, type CrmPerson, type CrmTask, type IntakeReviewInput, type IntakeReviewItem,
   type NoteInput, type OpportunityInput, type OpportunityPatch, type OpportunityQuery, type Paged, type PersonInput,
-  type PersonPatch, type PersonQuery, type SchemaReport, type ScopeFilter, type TaskInput, type TaskPatch, type TaskQuery,
+  type PersonPatch, type PersonQuery, type SchemaReport, type ScopeFilter, type TaskInput, type TaskPatch, type TaskQuery, type WorkspaceMember,
 } from '../crm-adapter.interface';
 import { TwentyClient, firstDataValue } from './twenty-client';
 import { INTAKE_REVIEW_OBJECT, REQUIRED_FIELDS, stageOptions, stageToOption } from './twenty.schema';
@@ -159,7 +159,7 @@ export class TwentyAdapter implements CrmAdapter {
       let changed = merged.some((o: any, i: number) => o.label !== stageField.options[i]?.label);
       for (const d of desired) if (!have.has(d.value)) { merged.push(d); changed = true; }
       if (changed) {
-        await this.client.request(ctx, { method: 'PATCH', path: `/rest/metadata/fields/${stageField.id}`, body: { options: merged.map(({ value, label, position, color }: any, i: number) => ({ value, label, color, position: i })) } });
+        await this.client.request(ctx, { method: 'PATCH', path: `/rest/metadata/fields/${stageField.id}`, body: { options: merged.map(({ value, label, color }: any, i: number) => ({ value, label, color, position: i })) } });
         report.created.push('opportunity.stage.options');
       } else report.existing.push('opportunity.stage.options');
       const extra = (stageField.options ?? []).filter((o: any) => !desired.some((d) => d.value === o.value));
@@ -176,6 +176,16 @@ export class TwentyAdapter implements CrmAdapter {
     } else report.existing.push('object intakeReview');
     await ensureFields(review.id, review.fields ?? [], INTAKE_REVIEW_OBJECT.fields, 'intakeReview');
     return report;
+  }
+
+  async listWorkspaceMembers(ctx: TenantContext): Promise<WorkspaceMember[]> {
+    const { records } = await this.client.listAll(ctx, '/rest/workspaceMembers', undefined, { max: 1000 });
+    return records.map((m) => ({
+      id: String(m.id),
+      name: [m.name?.firstName, m.name?.lastName].filter(Boolean).join(' ').trim() || String(m.userEmail ?? m.id),
+      email: str(m.userEmail) ?? null,
+      userId: str(m.userId) ?? null,
+    }));
   }
 
   // ── reads ────────────────────────────────────────────────────

@@ -228,8 +228,19 @@ export interface SchemaReport {
   warnings: string[];
 }
 
+export interface WorkspaceMember {
+  id: string;
+  name: string;
+  email: string | null;
+  /** Twenty user id (global across workspaces) */
+  userId: string | null;
+}
+
 export interface CrmAdapter {
   ensureSchema(ctx: TenantContext, pipeline: PipelineConfig): Promise<SchemaReport>;
+
+  /** Members of the tenant's Twenty workspace (for linking employees to their Twenty login). */
+  listWorkspaceMembers(ctx: TenantContext): Promise<WorkspaceMember[]>;
 
   findPeople(ctx: TenantContext, q: PersonQuery): Promise<CrmPerson[]>;
   findCompanies(ctx: TenantContext, q: CompanyQuery): Promise<CrmCompany[]>;
@@ -284,4 +295,9 @@ export class CrmTransientError extends Error {
   }
 }
 
-export const ownerKeyOf = (u: { twentyMemberId?: string; userId: string }): string => u.twentyMemberId ?? u.userId;
+/**
+ * Stable ownership key written to beeOwnerMemberId / beeTeamId and used by every scope filter. It is the Bee user id
+ * and never changes — linking or re-linking a Twenty member must not hide a salesperson's existing records from them.
+ * Twenty's native owner fields (owner / accountOwner / assignee) are set separately for the web UI.
+ */
+export const ownerKeyOf = (u: { userId: string }): string => u.userId;

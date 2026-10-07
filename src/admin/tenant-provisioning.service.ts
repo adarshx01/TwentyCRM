@@ -1,7 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { DbService } from '../database/db.service';
-import { intakeSources, tenants, users, type PipelineConfig } from '../database/schema';
+import { intakeSources, teams, tenants, users, type PipelineConfig } from '../database/schema';
+import { TwentyAccessService, type AccessSyncReport } from '../crm/twenty/twenty-access.service';
+import { tenantAppSecret } from '../access/app-secret';
 import { TenantManifestSchema, type TenantManifest } from './manifest';
 import { CRM_ADAPTER, type CrmAdapter } from '../crm/crm-adapter.interface';
 import { toTenantContext } from '../tenant/tenant.service';
@@ -22,6 +24,11 @@ export interface ProvisionReport {
   users: { created: number; updated: number };
   intakeSources: { created: number; updated: number };
   stageMigrations: Array<{ from: string; to: string; affected: number }>;
+  /** Twenty members linked to users by the (operator-attested) manifest e-mail at provisioning time */
+  membersLinked: number;
+  /** Native Twenty roles/settings brought in line with Bee (null on dry runs) */
+  access: AccessSyncReport | null;
+  app: { configured: boolean; reason?: string } | null;
   dryRun: boolean;
 }
 
@@ -37,6 +44,7 @@ export class TenantProvisioningService {
     private readonly audit: AuditService,
     @Inject(CRM_ADAPTER) private readonly crm: CrmAdapter,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly access: TwentyAccessService,
   ) {}
 
   private pipelineOf(m: TenantManifest, version: number): PipelineConfig {
@@ -55,7 +63,7 @@ export class TenantProvisioningService {
     const pipeline = this.pipelineOf(m, nextPipelineSame ? existing!.pipelineConfig!.version : (existing?.pipelineConfig?.version ?? 0) + 1);
 
     // CFG-04: a stage with active records cannot be removed without a previewed migration.
-    const report: ProvisionReport = { tenantId: existing?.id ?? '', created: !existing, configVersion: existing?.configVersion ?? 1, crmSchema: null, users: { created: 0, updated: 0 }, intakeSources: { created: 0, updated: 0 }, stageMigrations: [], dryRun };
+    const report: ProvisionReport = { tenantId: existing?.id ?? '', created: !existing, configVersion: existing?.configVersion ?? 1, crmSchema: null, users: { created: 0, updated: 0 }, intakeSources: { created: 0, updated: 0 }, stageMigrations: [], membersLinked: 0, access: null, app: null, dryRun };
     if (existing?.pipelineConfig) {
       const removed = existing.pipelineConfig.stages.filter((s) => !pipeline.stages.some((n) => n.id === s.id));
       if (removed.length) {
@@ -74,7 +82,7 @@ export class TenantProvisioningService {
     const values = {
       slug: m.slug, name: m.name, deploymentId: m.deploymentId, twentyWorkspaceId: m.twenty.workspaceId, twentyBaseUrl: m.twenty.baseUrl ?? null, twentyApiTokenRef: m.twenty.apiTokenRef,
       timezone: m.timezone, workingDays: m.workingDays, morningReminderTime: m.morningReminderTime, defaultCurrency: m.defaultCurrency, pipelineConfig: pipeline,
-      settings: { ...(existing?.settings ?? {}), ...(m.defaultCountry ? { defaultCountry: m.defaultCountry } : {}), ...(m.twenty.webhookSecretRef ? { twentyWebhookSecretRef: m.twenty.webhookSecretRef } : {}), ...(m.channels?.whatsapp?.accessTokenRef ? { whatsappAccessTokenRef: m.channels.whatsapp.accessTokenRef } : {}) }, quotaLimits: m.quotas ?? null, retentionPolicy: m.retention ?? null, updatedAt: new Date(),
+      settings: { ...(existing?.settings ?? {}), ...(m.defaultCountry ? { defaultCountry: m.defaultCountry } : {}), ...(m.twenty.webhookSecretRef ? { twentyWebhookSecretRef: m.twenty.webhookSecretRef } : {}), ...(m.twenty.serviceUser ? { twentyServiceUser: m.twenty.serviceUser } : {}), ...(m.channels?.whatsapp?.accessTokenRef ? { whatsappAccessTokenRef: m.channels.whatsapp.accessTokenRef } : {}) }, quotaLimits: m.quotas ?? null, retentionPolicy: m.retention ?? null, updatedAt: new Date(),
     };
     const changed = !existing || !same(
       [existing.name, existing.timezone, existing.workingDays, existing.morningReminderTime, existing.defaultCurrency, existing.pipelineConfig, existing.twentyBaseUrl, existing.twentyApiTokenRef, existing.quotaLimits, existing.retentionPolicy, existing.settings],
@@ -95,6 +103,11 @@ export class TenantProvisioningService {
     report.crmSchema = await this.crm.ensureSchema(toTenantContext(row, this.config.twenty.apiUrl), pipeline);
 
     await this.db.tenantTx(row.id, async (tx) => {
+      const teamKeys = new Map<string, string>(m.teams.map((t) => [t.key, t.name]));
+      for (const u of m.users) for (const k of [u.teamId, ...(u.managedTeamIds ?? [])]) if (k && !teamKeys.has(k)) teamKeys.set(k, k);
+      for (const [key, name] of teamKeys) {
+        await tx.insert(teams).values({ tenantId: row.id, key, name }).onConflictDoUpdate({ target: [teams.tenantId, teams.key], set: m.teams.some((t) => t.key === key) ? { name, status: 'active', updatedAt: new Date() } : { status: 'active' } });
+      }
       for (const u of m.users) {
         const conds = u.email ? sql`lower(${users.email}) = ${u.email.toLowerCase()}` : eq(users.twentyMemberId, u.twentyMemberId!);
         const [cur] = await tx.select().from(users).where(and(eq(users.tenantId, row.id), conds));
@@ -120,6 +133,29 @@ export class TenantProvisioningService {
       }
     });
     this.tenantSvc.invalidate(row.id);
+    const ctx = toTenantContext(row, this.config.twenty.apiUrl);
+
+    // IAM-01: the operator-attested manifest binds each listed employee to their Twenty membership. After provisioning,
+    // linking happens only explicitly by a client admin; an e-mail match alone never grants access at runtime.
+    try {
+      const unlinked = await this.db.tenantTx(row.id, (tx) => tx.select({ id: users.id, email: users.email }).from(users).where(and(eq(users.tenantId, row.id), isNull(users.twentyMemberId))));
+      const listed = new Set(m.users.map((u) => u.email?.toLowerCase()).filter(Boolean));
+      if (unlinked.some((u) => u.email && listed.has(u.email))) {
+        const members = await this.crm.listWorkspaceMembers(ctx);
+        await this.db.tenantTx(row.id, async (tx) => {
+          for (const u of unlinked) {
+            const mem = u.email && listed.has(u.email) ? members.find((x) => x.email?.toLowerCase() === u.email) : undefined;
+            const taken = mem && (await tx.select({ id: users.id }).from(users).where(and(eq(users.tenantId, row.id), eq(users.twentyMemberId, mem.id))))[0];
+            if (mem && !taken) { await tx.update(users).set({ twentyMemberId: mem.id, updatedAt: new Date() }).where(eq(users.id, u.id)); report.membersLinked++; }
+          }
+        });
+      }
+    } catch { /* Twenty unreachable: members can be linked later by a client admin */ }
+
+    report.access = await this.access.sync(ctx);
+    if (this.config.web.token) {
+      report.app = await this.access.configureApp(ctx, { BEE_CHAT_TOKEN: tenantAppSecret(this.config.web.token, row.id), ...(this.config.web.appBeeUrl ? { BEE_API_URL: this.config.web.appBeeUrl } : {}) });
+    }
     await this.audit.write({ tenantId: row.id, action: 'tenant.provisioned', resourceType: 'tenant', resourceId: row.id, metadata: { actor: opts.actor, created: report.created, configVersion: report.configVersion } });
     return report;
   }

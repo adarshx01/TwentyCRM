@@ -7,6 +7,8 @@ import { canUserAccess, roleMayPerform, scopeFilterFor } from '../common/scope';
 import { parseTimeExpression, resolveRelativeDate } from '../common/utils/date.util';
 import { IdentityService } from '../identity/identity.service';
 import type { MutationData } from './draft.types';
+import { ArchiveRequestService } from '../approvals/archive-request.service';
+import { can } from '../access/permissions';
 
 type Entity = 'person' | 'company' | 'opportunity' | 'task';
 export type Choice = { entity: Entity; id: string; label: string };
@@ -29,6 +31,7 @@ export class MutationBuilder {
   constructor(
     @Inject(CRM_ADAPTER) private readonly crm: CrmAdapter,
     private readonly identity: IdentityService,
+    private readonly archiveRequests: ArchiveRequestService,
   ) {}
 
   stageIdFor(tenant: TenantContext, label: string): string | undefined {
@@ -71,10 +74,9 @@ export class MutationBuilder {
     const action: AllowedAction['type'] | null = (['update_stage', 'add_note', 'create_task', 'reschedule', 'assign', 'archive', 'restore'] as const).find((k) => k === kind) ?? null;
     if (!action) return { kind: 'message', text: 'I can only save changes I understand. Try "move Rajesh to Proposal" or "note: …".' };
 
-    if (action === 'archive' && !roleMayPerform(user.role, 'archive')) {
-      return { kind: 'message', text: 'Records are never permanently deleted. Leads are archived (recoverable), and archiving needs approval from a manager, CXO or administrator. Please ask one of them to archive it.' };
-    }
-    if (!roleMayPerform(user.role, action)) return { kind: 'message', text: 'Your role cannot perform this action. A manager, CXO or administrator can.' };
+    // §4: a salesperson cannot archive, but can REQUEST it; an approver with scope over the record decides later.
+    const requestOnly = action === 'archive' && !roleMayPerform(user.role, 'archive') && can(user.role, 'records.archive.request');
+    if (!requestOnly && !roleMayPerform(user.role, action)) return { kind: 'message', text: 'Your role cannot perform this action. A manager, CXO or administrator can.' };
 
     // create_task without a target is a standalone task owned by the user.
     if (action === 'create_task' && !intent.targetQuery && !chosen) return this.createTask(tenant, user, intent, undefined, nowIso);
@@ -95,7 +97,7 @@ export class MutationBuilder {
       case 'create_task': return this.createTask(tenant, user, intent, target, nowIso);
       case 'reschedule': return this.reschedule(tenant, user, intent, target, nowIso);
       case 'assign': return this.assign(tenant, user, intent, target);
-      case 'archive': return this.archive(tenant, user, target);
+      case 'archive': return requestOnly ? this.requestArchive(tenant, user, target) : this.archive(tenant, user, target);
       case 'restore': return this.restore(tenant, user, target);
     }
     return { kind: 'message', text: 'Unsupported request.' };
@@ -185,7 +187,7 @@ export class MutationBuilder {
   private async assign(tenant: TenantContext, user: UserContext, intent: LlmIntent, target: Choice): Promise<BuildResult> {
     if (target.entity === 'task') { /* allowed */ }
     if (!intent.newOwnerName) return { kind: 'message', text: 'Who should own it?' };
-    const people = (await this.identity.findUsersByName(tenant.tenantId, intent.newOwnerName)).filter((u) => u.role !== 'platform_operator');
+    const people = await this.identity.findUsersByName(tenant.tenantId, intent.newOwnerName);
     if (!people.length) return { kind: 'message', text: `I couldn't find an active member named "${intent.newOwnerName}" in this workspace.` };
     if (people.length > 1) return { kind: 'message', text: `Several members match "${intent.newOwnerName}": ${people.map((p) => p.displayName).join(', ')}. Please use the full name.` };
     const owner = people[0];
@@ -220,6 +222,21 @@ export class MutationBuilder {
       action: { type: 'archive', targetType: target.entity, targetId: target.id, expectedVersion: rec.updatedAt, cascadeTaskIds: cascade },
       data: { kind: 'mutation', summaryLines: [`*Archive:* ${target.label}`, '   Nothing is permanently deleted — an archived record can be restored.', '   It leaves active searches and reminders.', ...(cascade.length ? [`   ${cascade.length} open task(s) linked to it are archived with it`] : [])], warnings: [] },
     };
+  }
+
+  private async requestArchive(tenant: TenantContext, user: UserContext, target: Choice): Promise<BuildResult> {
+    if (target.entity === 'task') return { kind: 'message', text: 'Tasks are completed rather than archived.' };
+    try {
+      const r = await this.archiveRequests.create(tenant, user, { entity: target.entity, id: target.id, label: target.label });
+      return {
+        kind: 'message',
+        text: r.existing
+          ? `An archive request for ${target.label} is already waiting for a manager, CXO or administrator.`
+          : `📨 Archive requested for ${target.label}.\nRecords are never permanently deleted; archiving needs approval from a manager, CXO or administrator with access to it. Nothing changes until they approve it in Bee › Approvals.`,
+      };
+    } catch (e) {
+      return { kind: 'message', text: (e as Error).message };
+    }
   }
 
   private async restore(tenant: TenantContext, user: UserContext, target: Choice): Promise<BuildResult> {

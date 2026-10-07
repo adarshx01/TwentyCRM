@@ -15,6 +15,8 @@ export interface TwentyRequest {
   path: string;
   query?: Record<string, string | number | undefined>;
   body?: unknown;
+  /** Bearer to use instead of the workspace service key (the Bee service user's session, see TwentyAccessService) */
+  bearer?: string;
 }
 
 export interface ListResult {
@@ -43,7 +45,7 @@ export class TwentyClient {
 
   async request(ctx: TenantContext, req: TwentyRequest): Promise<any> {
     await this.limiter.takeRequest(ctx.twentyWorkspaceId);
-    const token = await this.secrets.resolve(ctx.twentyApiTokenRef);
+    const token = req.bearer ?? (await this.secrets.resolve(ctx.twentyApiTokenRef));
     const base = (ctx.twentyBaseUrl ?? this.config.twenty.apiUrl).replace(/\/$/, '');
     const url = new URL(`${base}${req.path}`);
     for (const [k, v] of Object.entries(req.query ?? {})) if (v !== undefined) url.searchParams.set(k, String(v));

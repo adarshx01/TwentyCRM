@@ -33,6 +33,13 @@ import { DevChannel, DevMediaFetcher, DevSender } from './channels/dev/dev.chann
 import { DevController } from './channels/dev/dev.controller';
 import { WebChannel } from './channels/web/web.channel';
 import { WebChatController } from './channels/web/web.controller';
+import { OperatorService } from './access/operator.service';
+import { UserDirectoryService } from './access/user-directory.service';
+import { PermissionGuard } from './access/permission.guard';
+import { ApprovalsController, MeController, TenantAdminController } from './access/access.controllers';
+import { ArchiveRequestService } from './approvals/archive-request.service';
+import { TenantConfigService } from './admin/tenant-config.service';
+import { TwentyAccessService } from './crm/twenty/twenty-access.service';
 import { WhatsAppSender } from './channels/whatsapp/whatsapp.sender';
 import { WhatsAppMediaFetcher } from './channels/whatsapp/whatsapp.media';
 import { BotFrameworkVerifier, TEAMS_VERIFIER, TeamsMediaFetcher, TeamsSender, TeamsTokenProvider } from './channels/teams/teams.service';
@@ -91,6 +98,7 @@ const domain: Provider[] = [
   OutboundService, DraftService, ConfirmationService, DuplicateDetector, MutationBuilder, ReplyService, ConversationService, ReportsService,
   SchedulePlanner, DigestService, SchedulerService, InboundService, IntakeService, AssignmentService, GraphMailboxProvider, MailboxPoller,
   MaintenanceService, TenantProvisioningService, WorkersService,
+  OperatorService, UserDirectoryService, ArchiveRequestService, TenantConfigService, TwentyAccessService,
 ];
 
 @Global()
@@ -99,11 +107,12 @@ class CoreModule {}
 
 @Module({
   imports: [ConfigModule, DatabaseModule, CoreModule],
-  controllers: [WebhooksController, ApiController, AdminController, IntakeWebhookController, HealthController, DevController, WebChatController],
+  controllers: [WebhooksController, ApiController, AdminController, IntakeWebhookController, HealthController, DevController, WebChatController, MeController, ApprovalsController, TenantAdminController],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_GUARD, useClass: ActorGuard },
+    { provide: APP_GUARD, useClass: PermissionGuard }, // last: needs the live actor
   ],
 })
 export class AppModule {}

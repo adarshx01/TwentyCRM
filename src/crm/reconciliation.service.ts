@@ -6,6 +6,7 @@ import { TenantService } from '../tenant/tenant.service';
 import { SchedulePlanner } from '../reminders/schedule-planner.service';
 import { CRM_ADAPTER, type CrmAdapter } from './crm-adapter.interface';
 import { IdentityService } from '../identity/identity.service';
+import { TwentyAccessService } from './twenty/twenty-access.service';
 import { getLogger } from '../observability/logger';
 import { errorMessage } from '../common/errors';
 
@@ -27,6 +28,7 @@ export class ReconciliationService {
     private readonly planner: SchedulePlanner,
     private readonly identity: IdentityService,
     @Inject(CRM_ADAPTER) private readonly crm: CrmAdapter,
+    private readonly access: TwentyAccessService,
   ) {}
 
   async run(tenantId: string, now: Date = new Date()): Promise<{ opportunities: number; tasks: number; stageChanges: number }> {
@@ -85,6 +87,10 @@ export class ReconciliationService {
       await save('task', now);
     } catch (e) { await save('task', (await cp('task'))?.checkpoint ?? null, errorMessage(e)); throw e; }
 
+    // Native Twenty roles follow Bee: re-applies role changes/revocations made in Bee and undoes native drift (IAM-05).
+    const access = await this.access.sync(tenant);
+    if (!access.ok || access.memberChanges.length || access.drift.length) this.log.warn({ tenantId, ok: access.ok, changes: access.memberChanges.length, drift: access.drift }, 'twenty access re-applied');
+
     this.log.info({ opportunities: oppCount, tasks: taskCount, stageChanges }, 'reconciliation finished');
     return { opportunities: oppCount, tasks: taskCount, stageChanges };
   }
@@ -92,6 +98,6 @@ export class ReconciliationService {
   private async userByOwnerKey(tenantId: string, ownerKey: string): Promise<string | null> {
     const { users } = await import('../database/schema');
     const rows = await this.db.tenantTx(tenantId, (tx) => tx.select({ id: users.id, member: users.twentyMemberId }).from(users).where(eq(users.tenantId, tenantId)));
-    return rows.find((u) => (u.member ?? u.id) === ownerKey)?.id ?? null;
+    return rows.find((u) => u.id === ownerKey || u.member === ownerKey)?.id ?? null; // member keys: records written before ownership used user ids
   }
 }

@@ -12,7 +12,7 @@ describe('chat approval of intake review items uses the normal preview/confirm f
   beforeAll(async () => {
     env = await createTestEnv({ workers: true });
     T = await seedTenant(env, { slug: 'chat-review', users: [
-      { key: 'olivia', displayName: 'Olivia', role: 'salesperson', phone: '+919800000011' },
+      { key: 'olivia', displayName: 'Olivia', role: 'salesperson', phone: '+919800000011', teamId: 'x' },
       { key: 'mgr', displayName: 'Mo Manager', role: 'manager', phone: '+919800000014', managedTeamIds: ['x'] },
     ], extra: { intakeSources: [{ sourceId: 'web', type: 'email_forward', intakeAlias: 'leads@intake.example', parsingRules: FORM_RULES, crmRouting: { initialStage: 'new', sourceTag: 'Website', ownerEmail: 'olivia@chat-review.test', mode: 'review' } }] } });
     ws = env.twenty.workspaces.get('chat-review'); db = env.get(DbService); intake = env.get(IntakeService);
@@ -40,7 +40,7 @@ describe('chat approval of intake review items uses the normal preview/confirm f
     await pressButton(env, T.users.mgr.phone!, confirm);
     await waitFor(async () => (await db.systemTx((tx) => tx.select().from(intakeRecords))).find((x) => x.id === recordId)?.state === 'committed' || undefined, 30000, 300, 'committed');
     expect(ws.all('opportunities')).toHaveLength(1);
-    expect(ws.all('people')[0].beeOwnerMemberId).toBe(T.users.olivia.memberId); // owner is the assigned salesperson, not the approver
+    expect(ws.all('people')[0].beeOwnerMemberId).toBe(T.users.olivia.ownerKey); // owner is the assigned salesperson, not the approver
     expect((await db.tenantTx(T.tenantId, (tx) => tx.select().from(operations))).filter((o) => o.idempotencyKey === `intake:${recordId}`)).toHaveLength(1);
   });
 

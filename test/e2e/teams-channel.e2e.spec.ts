@@ -37,7 +37,7 @@ describe('Microsoft Teams channel parity (§7, TM-01..04, AT-11)', () => {
     await post(activity({ text: undefined, value: { id: buttons[0].id } }));
     await waitFor(() => texts().some((m) => m.content.kind === 'reply' && /✅ Saved/.test(m.content.text)), 30000, 100, 'saved');
     expect(ws.all('people')).toHaveLength(1);
-    expect(ws.all('people')[0].beeOwnerMemberId).toBe(T.users.tina.memberId);
+    expect(ws.all('people')[0].beeOwnerMemberId).toBe(T.users.tina.ownerKey);
     // proactive replies use the stored conversation reference
     expect(preview.target.conversationRef).toMatchObject({ conversationId: 'conv-tina', serviceUrl: 'https://smba.trafficmanager.net/emea/' });
   });
@@ -59,7 +59,7 @@ describe('Microsoft Teams channel parity (§7, TM-01..04, AT-11)', () => {
   it('the morning digest is delivered proactively to the private chat as an Adaptive Card; after uninstall delivery fails cleanly without data loss (AT-11)', async () => {
     await db.systemTx((tx) => tx.execute(sql`delete from schedules; delete from delivery_state;`));
     const day = '2030-01-15'; const dueAt = '2030-01-14T18:30:00.000Z';
-    await seedRecords(env, 'teams-co', { tasks: [{ title: 'Teams follow-up', beeStatus: 'open', status: 'TODO', beeTaskKind: 'follow_up', beeHasTime: false, beeDueDate: day, dueAt, beeOwnerMemberId: T.users.tina.memberId }] });
+    await seedRecords(env, 'teams-co', { tasks: [{ title: 'Teams follow-up', beeStatus: 'open', status: 'TODO', beeTaskKind: 'follow_up', beeHasTime: false, beeDueDate: day, dueAt, beeOwnerMemberId: T.users.tina.ownerKey }] });
     await env.get<SchedulePlanner>(SchedulePlanner).ensureDigest(T.tenantId, T.users.tina.id, day, new Date('2030-01-15T02:00:00Z'));
     await db.systemTx((tx) => tx.execute(sql`update schedules set next_run_utc = now() - interval '1 minute'`));
     expect(await env.get<SchedulerService>(SchedulerService).tick('t')).toBe(1);

@@ -31,7 +31,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     let code: string;
 
     if (exception instanceof UserFacingError) {
-      status = exception.code === 'NOT_FOUND' ? 404 : exception.code === 'REVIEW_FORBIDDEN' ? 403 : 422;
+      status = exception.code === 'NOT_FOUND' ? 404 : /FORBIDDEN$/.test(exception.code) ? 403 : /CONFLICT$/.test(exception.code) ? 409 : 422;
       message = exception.message;
       code = exception.code;
     } else if (exception instanceof ZodError) {

@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { and, desc, eq, gt, ne, or, sql, type SQL } from 'drizzle-orm';
 import { DateTime } from 'luxon';
 import { DbService } from '../database/db.service';
-import { intakeRecords, intakeSources, deadLetters, type IntakeTimestamps, type ProposedAction } from '../database/schema';
+import { intakeRecords, intakeSources, deadLetters, users, type IntakeTimestamps, type ProposedAction } from '../database/schema';
 import { MediaService } from '../media/media.service';
 import { QueueService } from '../queue/queue.service';
 import { QUEUES, type CrmWriteJob, type EmailIntakeJob } from '../queue/queues';
@@ -14,7 +14,7 @@ import { TenantService } from '../tenant/tenant.service';
 import { IdentityService } from '../identity/identity.service';
 import { OutboundService } from '../outbound/outbound.service';
 import { addWorkingDays } from '../common/utils/date.util';
-import { isRoleSufficient } from '../common/guards/roles.guard';
+import { can, recordScopeOf } from '../access/permissions';
 import type { UserRole } from '../database/schema';
 import { CaptureLeadActionSchema, type CaptureLeadAction } from '../common/schemas';
 import { meetsAutoSaveMinimum, parseEmail, parseFormEvent, type ParsedEmail, type ParsedFields } from './intake-parser';
@@ -41,6 +41,9 @@ export interface InboundEmailEnvelope {
 const FINGERPRINT_WINDOW_HOURS = 6;
 
 interface Meta { templateMatched: boolean; senderAllowed: boolean; suspicious: string[]; missing: string[]; messageId?: string; from?: string; subject?: string }
+
+/** Who reviews an intake item (IN-11). */
+export interface ReviewActor { id: string; role: UserRole; managedTeamIds?: string[] }
 
 /**
  * Contact-form email intake (Sections 16–18, IN-01..IN-12).
@@ -301,19 +304,46 @@ export class IntakeService {
   }
 
   // ── review queue (IN-11) ────────────────────────────────────
-  async listReview(tenantId: string, state: 'review' | 'failed' | 'committing' = 'review'): Promise<IntakeRow[]> {
-    return this.db.tenantTx(tenantId, (tx) => tx.select().from(intakeRecords).where(and(eq(intakeRecords.tenantId, tenantId), eq(intakeRecords.state, state))).orderBy(desc(intakeRecords.createdAt)).limit(100));
+  /**
+   * Review queue (IN-11). Managers see only enquiries routed to a team they manage (or to themselves); unrouted items
+   * form the client-admin queue (IN-10) that CXOs and client admins see. Without a viewer: the whole queue (system).
+   */
+  async listReview(tenantId: string, state: 'review' | 'failed' | 'committing' = 'review', viewer?: ReviewActor): Promise<IntakeRow[]> {
+    const rows = await this.db.tenantTx(tenantId, (tx) => tx.select().from(intakeRecords).where(and(eq(intakeRecords.tenantId, tenantId), eq(intakeRecords.state, state))).orderBy(desc(intakeRecords.createdAt)).limit(100));
+    if (!viewer) return rows;
+    if (!can(viewer.role, 'intake.review')) return [];
+    if (recordScopeOf(viewer.role) === 'all') return rows;
+    const sources = await this.db.tenantTx(tenantId, (tx) => tx.select({ id: intakeSources.id, routing: intakeSources.crmRouting }).from(intakeSources).where(eq(intakeSources.tenantId, tenantId)));
+    const teamOf = await this.teamsByUser(tenantId);
+    return rows.filter((r) => this.inReviewScope(viewer, sources.find((s) => s.id === r.sourceId)?.routing as any, teamOf));
   }
 
-  private assertReviewer(role: UserRole): void {
-    // Restricted users cannot approve (AT-20): manager, CXO or client admin only.
-    if (!isRoleSufficient(role, 'manager')) throw new UserFacingError('Only managers, CXOs or administrators can review enquiries.', 'REVIEW_FORBIDDEN');
+  private async teamsByUser(tenantId: string): Promise<Map<string, string | null>> {
+    const rows = await this.db.tenantTx(tenantId, (tx) => tx.select({ id: users.id, teamId: users.teamId }).from(users).where(eq(users.tenantId, tenantId)));
+    return new Map(rows.map((u) => [u.id, u.teamId]));
   }
 
-  async approve(tenantId: string, recordId: string, actor: { id: string; role: UserRole }, corrections: Partial<ParsedFields> = {}): Promise<IntakeRow> {
-    this.assertReviewer(actor.role);
+  /** A manager reviews items routed to a team they manage, to themselves, or to an owner in a team they manage. */
+  private inReviewScope(viewer: ReviewActor, routing: { teamId?: string; ownerUserId?: string } | undefined, teamOf: Map<string, string | null>): boolean {
+    if (recordScopeOf(viewer.role) === 'all') return true;
+    if (!routing) return false;
+    const managed = viewer.managedTeamIds ?? [];
+    const ownerTeam = routing.ownerUserId ? teamOf.get(routing.ownerUserId) : undefined;
+    return (!!routing.teamId && managed.includes(routing.teamId)) || routing.ownerUserId === viewer.id || (!!ownerTeam && managed.includes(ownerTeam));
+  }
+
+  private async assertReviewer(tenantId: string, actor: ReviewActor, rec: IntakeRow): Promise<void> {
+    // Restricted users cannot approve (AT-20); managers only within the teams they manage (IN-10/IN-11).
+    if (!can(actor.role, 'intake.review')) throw new UserFacingError('Only managers, CXOs or administrators can review enquiries.', 'REVIEW_FORBIDDEN');
+    if (recordScopeOf(actor.role) === 'all') return;
+    const [src] = await this.db.tenantTx(tenantId, (tx) => tx.select({ routing: intakeSources.crmRouting }).from(intakeSources).where(eq(intakeSources.id, rec.sourceId)));
+    if (!this.inReviewScope(actor, src?.routing as any, await this.teamsByUser(tenantId))) throw new UserFacingError('Enquiry not found.', 'NOT_FOUND');
+  }
+
+  async approve(tenantId: string, recordId: string, actor: ReviewActor, corrections: Partial<ParsedFields> = {}): Promise<IntakeRow> {
     const [rec] = await this.db.tenantTx(tenantId, (tx) => tx.select().from(intakeRecords).where(eq(intakeRecords.id, recordId)));
     if (!rec) throw new UserFacingError('Enquiry not found.', 'NOT_FOUND');
+    await this.assertReviewer(tenantId, actor, rec);
     if (rec.state === 'committing' || rec.state === 'committed') return rec; // idempotent
     if (!['review', 'failed'].includes(rec.state)) throw new UserFacingError('This enquiry is not awaiting review.', 'BAD_STATE');
     const [src] = await this.db.tenantTx(tenantId, (tx) => tx.select().from(intakeSources).where(eq(intakeSources.id, rec.sourceId)));
@@ -326,10 +356,10 @@ export class IntakeService {
     return after;
   }
 
-  async reject(tenantId: string, recordId: string, actor: { id: string; role: UserRole }): Promise<IntakeRow> {
-    this.assertReviewer(actor.role);
+  async reject(tenantId: string, recordId: string, actor: ReviewActor): Promise<IntakeRow> {
     const [rec] = await this.db.tenantTx(tenantId, (tx) => tx.select().from(intakeRecords).where(eq(intakeRecords.id, recordId)));
     if (!rec) throw new UserFacingError('Enquiry not found.', 'NOT_FOUND');
+    await this.assertReviewer(tenantId, actor, rec);
     if (rec.state === 'committing' || rec.state === 'committed') throw new UserFacingError('This enquiry was already saved.', 'BAD_STATE');
     await this.db.tenantTx(tenantId, (tx) => tx.update(intakeRecords).set({ state: 'rejected', reviewedBy: actor.id, reviewedAt: new Date(), updatedAt: new Date() }).where(eq(intakeRecords.id, recordId)));
     await this.audit.write({ tenantId, userId: null, action: 'intake.rejected', resourceType: 'intake_record', resourceId: recordId, metadata: { by: actor.id } });
@@ -345,9 +375,16 @@ export class IntakeService {
       for (const item of await this.crm.listIntakeReviews(tenant, status)) {
         const [rec] = await this.db.tenantTx(tenantId, (tx) => tx.select().from(intakeRecords).where(eq(intakeRecords.id, item.recordId)));
         if (!rec || rec.state !== 'review') continue;
-        const actor = { id: item.reviewedBy ? `twenty:${item.reviewedBy}` : 'twenty', role: 'client_admin' as UserRole };
-        if (status === 'approved') await this.approve(tenantId, rec.id, actor); else await this.reject(tenantId, rec.id, actor);
-        n++;
+        // The decision was made in Twenty's own UI: it counts only if that member is linked to a Bee user allowed to review.
+        const reviewer = item.reviewedBy ? await this.identity.resolveTwentyMember(tenantId, item.reviewedBy) : null;
+        if (!reviewer) { await this.audit.write({ tenantId, action: 'intake.review_ignored', resourceType: 'intake_record', resourceId: rec.id, result: 'denied', metadata: { reason: 'unlinked or unauthorized Twenty reviewer', member: item.reviewedBy ?? null } }); continue; }
+        const actor: ReviewActor = { id: reviewer.user.userId, role: reviewer.user.role, managedTeamIds: reviewer.user.managedTeamIds };
+        try {
+          if (status === 'approved') await this.approve(tenantId, rec.id, actor); else await this.reject(tenantId, rec.id, actor);
+          n++;
+        } catch (e) {
+          await this.audit.write({ tenantId, userId: reviewer.user.userId, action: 'intake.review_ignored', resourceType: 'intake_record', resourceId: rec.id, result: 'denied', metadata: { reason: (e as Error).message } });
+        }
       }
     }
     // Retry mirroring for review items created while Twenty was unavailable.

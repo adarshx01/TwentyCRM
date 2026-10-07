@@ -65,7 +65,7 @@ describe('load envelope (§10, AT-15)', () => {
     env.whatsapp.clear();
     await db.systemTx((tx) => tx.execute(sql`delete from delivery_state`));
     const day = '2030-01-15'; const dueAt = '2030-01-14T18:30:00.000Z';
-    for (const t of tenants) await seedRecords(env, `load-${tenants.indexOf(t)}`, { tasks: Object.values(t.users).map((u) => ({ title: `Task for ${u.memberId}`, beeStatus: 'open', status: 'TODO', beeTaskKind: 'follow_up', beeHasTime: false, beeDueDate: day, dueAt, beeOwnerMemberId: u.memberId })) });
+    for (const t of tenants) await seedRecords(env, `load-${tenants.indexOf(t)}`, { tasks: Object.values(t.users).map((u) => ({ title: `Task for ${u.ownerKey}`, beeStatus: 'open', status: 'TODO', beeTaskKind: 'follow_up', beeHasTime: false, beeDueDate: day, dueAt, beeOwnerMemberId: u.ownerKey })) });
     const rows = tenants.flatMap((t) => Object.values(t.users).map((u) => ({ tenantId: t.tenantId, userId: u.id, type: 'digest', localDate: day, nextRunUtc: new Date(Date.now() - 30_000), timezone: 'Asia/Kolkata', idempotencyKey: `${t.tenantId}/${u.id}/${day}/morning` })));
     for (let i = 0; i < rows.length; i += 100) await db.systemTx((tx) => tx.insert(schedules).values(rows.slice(i, i + 100)));
     const t0 = Date.now();
@@ -82,6 +82,6 @@ describe('load envelope (§10, AT-15)', () => {
     expect(all).toBeLessThan(10 * 60_000);
     expect(del).toHaveLength(625); expect(env.whatsapp.sent).toHaveLength(625);
     expect(new Set(del.map((d) => d.idempotencyKey)).size).toBe(625); // each intended digest exactly once
-    expect(env.whatsapp.texts(phones[0].tenant.users[phones[0].key].id)[0]).toContain(`Task for ${phones[0].tenant.users[phones[0].key].memberId}`);
+    expect(env.whatsapp.texts(phones[0].tenant.users[phones[0].key].id)[0]).toContain(`Task for ${phones[0].tenant.users[phones[0].key].ownerKey}`);
   }, 360000);
 });

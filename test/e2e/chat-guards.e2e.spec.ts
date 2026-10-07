@@ -15,7 +15,7 @@ describe('rescheduling and draft-targeting guards (AT-06, CAP-02, §6)', () => {
     env = await createTestEnv({ workers: true });
     T = await seedTenant(env, { slug: 'guard-co', users: [{ key: 'sam', displayName: 'Sam', role: 'salesperson', phone: SAM, teamId: 'a' }] });
     ws = env.twenty.workspaces.get('guard-co'); db = env.get(DbService);
-    const own = { beeOwnerMemberId: T.users.sam.memberId, beeTeamId: 'a' };
+    const own = { beeOwnerMemberId: T.users.sam.ownerKey, beeTeamId: 'a' };
     const person = crypto.randomUUID();
     await seedRecords(env, 'guard-co', {
       people: [{ id: person, name: { firstName: 'Rajesh', lastName: 'Kumar' }, ...own }],

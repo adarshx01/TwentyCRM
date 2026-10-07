@@ -10,8 +10,9 @@ import { maskSensitive } from '../../src/audit/audit.service';
 import { sanitizeForLlm, stripHtml } from '../../src/common/utils/sanitize.util';
 import { DefaultSecretResolver } from '../../src/secrets/secret-resolver';
 import { clean } from '../../src/crm/twenty/twenty.adapter';
-import { canAccessRecord, canApproveArchive, getRecordScope, isRoleSufficient } from '../../src/common/guards/roles.guard';
-import { roleMayPerform, scopeFilterFor } from '../../src/common/scope';
+import { can, permissionsOf, recordScopeOf, ROLE_MATRIX, TENANT_ROLES } from '../../src/access/permissions';
+import { tenantAppSecret } from '../../src/access/app-secret';
+import { canUserAccess, roleMayPerform, scopeFilterFor } from '../../src/common/scope';
 import type { UserContext } from '../../src/common/types';
 
 describe('model output can only express allowed, strict actions (SEC-02)', () => {
@@ -148,26 +149,43 @@ describe('secret references (CFG-03)', () => {
 
 describe('roles and record scope (Section 4, AT-02)', () => {
   const user = (role: UserContext['role'], extra: Partial<UserContext> = {}): UserContext => ({ userId: 'u1', tenantId: 't', displayName: 'U', role, timezone: 'UTC', managedTeamIds: [], dualDelivery: false, ...extra });
-  it('salesperson sees only owned; manager owned + assigned teams only; cxo/admin everything', () => {
-    const s = getRecordScope('salesperson', 'me', 'teamA');
-    expect(canAccessRecord(s, 'me')).toBe(true); expect(canAccessRecord(s, 'other', 'teamA')).toBe(false); expect(canAccessRecord(s, undefined)).toBe(false);
-    const m = getRecordScope('manager', 'me', 'teamA', ['teamB']);
-    expect(canAccessRecord(m, 'x', 'teamB')).toBe(true); expect(canAccessRecord(m, 'me')).toBe(true);
-    expect(canAccessRecord(m, 'x', 'teamA')).toBe(false); // own team is not automatically managed
-    expect(canAccessRecord(m, 'x', 'teamC')).toBe(false);
-    expect(canAccessRecord(getRecordScope('cxo', 'me'), 'x', 'z')).toBe(true);
-    expect(canAccessRecord(getRecordScope('client_admin', 'me'), 'x')).toBe(true);
+  it('salesperson sees only owned; manager owned + ASSIGNED teams only; cxo/admin everything', () => {
+    const s = user('salesperson', { teamId: 'teamA' });
+    expect(canUserAccess(s, { ownerMemberId: 'u1' })).toBe(true);
+    expect(canUserAccess(s, { ownerMemberId: 'other', teamId: 'teamA' })).toBe(false);
+    expect(canUserAccess(s, {})).toBe(false);
+    const m = user('manager', { teamId: 'teamA', managedTeamIds: ['teamB'] });
+    expect(canUserAccess(m, { ownerMemberId: 'x', teamId: 'teamB' })).toBe(true);
+    expect(canUserAccess(m, { ownerMemberId: 'u1' })).toBe(true);
+    expect(canUserAccess(m, { ownerMemberId: 'x', teamId: 'teamA' })).toBe(false); // own team is not automatically managed
+    expect(canUserAccess(m, { ownerMemberId: 'x', teamId: 'teamC' })).toBe(false);
+    expect(canUserAccess(user('cxo'), { ownerMemberId: 'x', teamId: 'z' })).toBe(true);
+    expect(canUserAccess(user('client_admin'), { ownerMemberId: 'x' })).toBe(true);
   });
-  it('archive approval is manager+ and chat roles are enforced per action', () => {
-    expect(canApproveArchive('salesperson')).toBe(false); expect(canApproveArchive('manager')).toBe(true);
+  it('the capability matrix is explicit: no rank inheritance, admin = administration + CXO record rights (A2)', () => {
+    expect(recordScopeOf('salesperson')).toBe('own'); expect(recordScopeOf('manager')).toBe('team'); expect(recordScopeOf('cxo')).toBe('all'); expect(recordScopeOf('client_admin')).toBe('all');
+    expect(can('salesperson', 'records.archive')).toBe(false); expect(can('salesperson', 'records.archive.request')).toBe(true);
+    expect(can('manager', 'records.archive')).toBe(true); expect(can('manager', 'tenant.users.manage')).toBe(false);
+    expect(can('cxo', 'tenant.users.manage')).toBe(false); expect(can('cxo', 'reports.company')).toBe(true);
+    expect(can('client_admin', 'tenant.users.manage')).toBe(true); expect(can('client_admin', 'records.write')).toBe(true);
+    for (const p of permissionsOf('cxo')) expect(can('client_admin', p)).toBe(true);
+    // the platform operator is not a tenant role at all
+    expect(can('platform_operator', 'records.read')).toBe(false); expect(permissionsOf('platform_operator')).toEqual([]);
+    expect(TENANT_ROLES).toEqual(['salesperson', 'manager', 'cxo', 'client_admin']);
+    expect(Object.keys(ROLE_MATRIX)).toHaveLength(4);
+  });
+  it('chat actions map to permissions', () => {
     expect(roleMayPerform('salesperson', 'archive')).toBe(false); expect(roleMayPerform('salesperson', 'assign')).toBe(false);
     expect(roleMayPerform('salesperson', 'add_note')).toBe(true); expect(roleMayPerform('manager', 'restore')).toBe(true);
-    expect(roleMayPerform('platform_operator', 'add_note')).toBe(false);
-    expect(isRoleSufficient('cxo', 'manager')).toBe(true); expect(isRoleSufficient('salesperson', 'manager')).toBe(false);
+    expect(roleMayPerform('platform_operator' as any, 'add_note')).toBe(false);
   });
-  it('CRM filters mirror the scope and fail closed without an owner key', () => {
-    expect(scopeFilterFor(user('salesperson', { twentyMemberId: 'm1' }))).toEqual({ kind: 'owned', ownerKey: 'm1' });
+  it('CRM filters mirror the scope and use the stable user id, never the Twenty member id', () => {
+    expect(scopeFilterFor(user('salesperson', { twentyMemberId: 'm1' }))).toEqual({ kind: 'owned', ownerKey: 'u1' });
     expect(scopeFilterFor(user('manager', { managedTeamIds: ['a', 'b'] }))).toEqual({ kind: 'team', ownerKey: 'u1', teamIds: ['a', 'b'] });
     expect(scopeFilterFor(user('cxo'))).toEqual({ kind: 'all' });
+  });
+  it('the in-CRM app secret is per tenant', () => {
+    expect(tenantAppSecret('master-key-1234567890-abcdefghij', 'tenant-a')).not.toBe(tenantAppSecret('master-key-1234567890-abcdefghij', 'tenant-b'));
+    expect(tenantAppSecret('master-key-1234567890-abcdefghij', 'tenant-a')).toBe(tenantAppSecret('master-key-1234567890-abcdefghij', 'tenant-a'));
   });
 });

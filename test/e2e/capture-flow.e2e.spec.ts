@@ -93,7 +93,7 @@ describe('card + voice capture end to end (AT-03, AT-04, CAP-*, ACT-*)', () => {
     expect(person.beePhoneE164).toBe('+919000011111');
     expect(person.beePhoneRaw).toBe('+91 90000 11111');
     expect(person.companyId).toBe(company.id);
-    expect(person.beeOwnerMemberId).toBe(T.users.sam.memberId);
+    expect(person.beeOwnerMemberId).toBe(T.users.sam.ownerKey);
     expect(opp.pointOfContactId).toBe(person.id); expect(opp.companyId).toBe(company.id); expect(opp.stage).toBe('NEW');
     expect(task.beeHasTime).toBe(true); expect(task.beeTaskKind).toBe('meeting'); expect(task.dueAt).toBe('2026-09-29T05:30:00.000Z');
     expect(ws.all('taskTargets').map((t) => t.targetOpportunityId)).toContain(opp.id);

@@ -19,8 +19,8 @@ describe('prompt injection and untrusted content (SEC-02, AT-14)', () => {
     T = await seedTenant(env, { slug: 'inj-co', users: [{ key: 'sam', displayName: 'Sam', role: 'salesperson', phone: SAM, teamId: 'a' }] });
     V = await seedTenant(env, { slug: 'victim-co', users: [{ key: 'vic', displayName: 'Vic', role: 'cxo', phone: OTHER }] });
     ws = env.twenty.workspaces.get('inj-co'); wsV = env.twenty.workspaces.get('victim-co'); db = env.get(DbService);
-    await seedRecords(env, 'victim-co', { opportunities: [{ name: 'Victim deal', stage: 'NEW', beeOwnerMemberId: V.users.vic.memberId }] });
-    await seedRecords(env, 'inj-co', { opportunities: [{ name: 'My deal', stage: 'NEW', beeOwnerMemberId: T.users.sam.memberId }] });
+    await seedRecords(env, 'victim-co', { opportunities: [{ name: 'Victim deal', stage: 'NEW', beeOwnerMemberId: V.users.vic.ownerKey }] });
+    await seedRecords(env, 'inj-co', { opportunities: [{ name: 'My deal', stage: 'NEW', beeOwnerMemberId: T.users.sam.ownerKey }] });
   });
   afterAll(async () => { await env.close(); });
 

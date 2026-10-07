@@ -22,7 +22,8 @@ export interface SeededTenant {
   tenantId: string;
   slug: string;
   token: string;
-  users: Record<string, { id: string; phone?: string; aad?: string; memberId: string }>;
+  /** ownerKey = the stable CRM ownership key (the Bee user id); memberId = the user's linked Twenty workspace member */
+  users: Record<string, { id: string; phone?: string; aad?: string; ownerKey: string; memberId: string }>;
 }
 
 let tenantSeq = 0;
@@ -33,7 +34,8 @@ export async function seedTenant(env: TestEnv, opts: { slug?: string; users: See
   const slug = opts.slug ?? `client-${n}-${Math.random().toString(36).slice(2, 6)}`;
   const token = `tok-${slug}`;
   process.env[`TWENTY_TOKEN_${n}_${slug.replace(/-/g, '_')}`] = token;
-  env.twenty.addWorkspace(slug, token);
+  const ws = env.twenty.addWorkspace(slug, token);
+  for (const u of opts.users) ws.data.workspaceMembers.push({ id: `m-${slug}-${u.key}`, name: { firstName: u.displayName, lastName: '' }, userEmail: `${u.key}@${slug}.test`, userId: `tu-${slug}-${u.key}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
   const refName = `TWENTY_TOKEN_${n}_${slug.replace(/-/g, '_')}`;
   const manifest = {
     manifestVersion: 1, slug, name: `Client ${slug}`, twenty: { workspaceId: `ws-${slug}`, baseUrl: env.twenty.url, apiTokenRef: `env:${refName}` },
@@ -48,7 +50,7 @@ export async function seedTenant(env: TestEnv, opts: { slug?: string; users: See
   const out: SeededTenant = { tenantId: report.tenantId, slug, token, users: {} };
   for (const u of opts.users) {
     const row = rows.find((r) => r.email === `${u.key}@${slug}.test`)!;
-    out.users[u.key] = { id: row.id, phone: u.phone, aad: u.aadId, memberId: `m-${slug}-${u.key}` };
+    out.users[u.key] = { id: row.id, phone: u.phone, aad: u.aadId, ownerKey: row.id, memberId: `m-${slug}-${u.key}` };
     await db.tenantTx(report.tenantId, async (tx) => {
       if (u.phone) await tx.insert(channelBindings).values({ tenantId: report.tenantId, userId: row.id, channel: 'whatsapp', connectionId: opts.connection?.wa ?? WA_PHONE_ID, externalId: u.phone, lastInboundAt: new Date() });
       if (u.aadId) await tx.insert(channelBindings).values({ tenantId: report.tenantId, userId: row.id, channel: 'teams', connectionId: opts.connection?.teamsTenant ?? 'entra-tenant-1', externalId: u.aadId, conversationRef: { serviceUrl: 'https://smba.trafficmanager.net/emea/', conversationId: `conv-${u.key}`, tenantId: opts.connection?.teamsTenant ?? 'entra-tenant-1' } });

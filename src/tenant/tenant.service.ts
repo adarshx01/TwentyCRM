@@ -61,6 +61,13 @@ export class TenantService {
     return ctx;
   }
 
+  /** Tenant owning a Twenty workspace (1:1, TEN-02). Inactive tenants resolve to null. */
+  async findByWorkspace(workspaceId: string): Promise<TenantContext | null> {
+    const [row] = await this.db.db.select({ id: tenants.id, status: tenants.status }).from(tenants).where(eq(tenants.twentyWorkspaceId, workspaceId));
+    if (!row || row.status !== 'active') return null;
+    return this.getContext(row.id);
+  }
+
   invalidate(tenantId?: string): void {
     if (tenantId) this.cache.delete(tenantId);
     else this.cache.clear();
