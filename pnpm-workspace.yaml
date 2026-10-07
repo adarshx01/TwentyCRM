@@ -1,0 +1,7 @@
+allowBuilds:
+  '@swc/core': true
+  esbuild: true
+  protobufjs: true
+  cpu-features: false
+  ssh2: false
+  redis-memory-server: true

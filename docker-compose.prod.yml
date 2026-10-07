@@ -1,0 +1,32 @@
+# Reference production layout for ONE application VM (run two for HA behind the load balancer).
+# Postgres, Redis and object storage are managed services (Cloud SQL, Memorystore, GCS) — not containers.
+#   docker compose -f docker-compose.prod.yml --env-file /etc/crm-bee/env up -d
+# The migration job is run ONCE per release by the deploy pipeline, not by every VM:
+#   docker run --rm --env-file /etc/crm-bee/migrate.env $IMAGE node dist/database/migrate.js
+name: crm-bee
+x-app: &app
+  image: ${CRM_BEE_IMAGE:?image tag, e.g. europe-docker.pkg.dev/PROJECT/crm-bee/app:1.0.0}
+  restart: always
+  env_file: /etc/crm-bee/env
+  stop_grace_period: 45s            # SIGTERM → drain in-flight jobs (shutdown budget is 40s)
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging: { driver: gcplogs }
+
+services:
+  pgbouncer:                         # transaction pooling for the API tier only; workers/queue use direct connections
+    image: edoburu/pgbouncer:1.23.1
+    restart: always
+    env_file: /etc/crm-bee/pgbouncer.env   # DATABASE_URL, POOL_MODE=transaction, MAX_CLIENT_CONN=400, DEFAULT_POOL_SIZE=20
+    ports: ["127.0.0.1:6432:5432"]
+  api:
+    <<: *app
+    environment: { APP_ROLE: api, APP_PORT: "3000" }
+    ports: ["3000:3000"]
+    deploy: { resources: { limits: { memory: 1g, cpus: "1.5" } } }
+  worker:
+    <<: *app
+    environment: { APP_ROLE: worker, APP_PORT: "3001" }
+    deploy: { replicas: 2, resources: { limits: { memory: 1g, cpus: "1.5" } } }

@@ -1,0 +1,10 @@
+# The scheduler holds the cron producers (digest tick, planner, retention, fan-out). Exactly one VM runs it;
+# if two run, pg-boss still fires each cron once and digests are claimed with FOR UPDATE SKIP LOCKED.
+name: crm-bee-scheduler
+services:
+  scheduler:
+    image: ${CRM_BEE_IMAGE:?}
+    restart: always
+    env_file: /etc/crm-bee/env
+    environment: { APP_ROLE: scheduler, APP_PORT: "3002" }
+    stop_grace_period: 45s

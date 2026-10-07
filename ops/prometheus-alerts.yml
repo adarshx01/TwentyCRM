@@ -1,0 +1,45 @@
+# Alerts for operators (§11). Technical alerts go to operators — never as unsolicited sales reports.
+groups:
+  - name: crm-bee
+    rules:
+      - alert: QueueOldestJobTooOld
+        expr: queue_oldest_job_age_seconds{queue=~"inbound-event|ai-extraction|crm-write|outbound-msg"} > 60
+        for: 5m
+        labels: { severity: page }
+        annotations: { summary: "Interactive queue {{ $labels.queue }} backlog > 60 s (scale workers / check Twenty rate budget)" }
+      - alert: ReminderDispatchLate
+        expr: histogram_quantile(0.99, sum(rate(reminder_dispatch_delay_seconds_bucket[15m])) by (le)) > 600
+        for: 10m
+        labels: { severity: page }
+        annotations: { summary: "99th percentile reminder submission delay exceeds 10 minutes" }
+      - alert: WebhookAuthFailures
+        expr: sum(increase(webhook_auth_failures_total[10m])) by (channel) > 20
+        labels: { severity: warn }
+        annotations: { summary: "Repeated webhook authentication failures on {{ $labels.channel }} (secret rotated? probing?)" }
+      - alert: DeadLettersAppearing
+        expr: sum(increase(dead_letters_total[15m])) by (queue) > 0
+        labels: { severity: warn }
+        annotations: { summary: "Dead-lettered work in {{ $labels.queue }}: see GET /admin/dead-letters and docs/operations.md" }
+      - alert: ChannelDisconnected
+        expr: channel_connection_health == 0
+        for: 10m
+        labels: { severity: page }
+        annotations: { summary: "Channel or mailbox {{ $labels.channel }} unhealthy (token expired / disconnected)" }
+      - alert: TwentyRateLimited
+        expr: sum(rate(twenty_api_rate_limit_delays_total[10m])) by (workspace) > 0.5
+        for: 15m
+        labels: { severity: warn }
+        annotations: { summary: "Workspace {{ $labels.workspace }} is consistently at its Twenty request budget" }
+      - alert: AmbiguousSends
+        expr: sum(increase(outbound_messages_total{result="ambiguous"}[1h])) > 0
+        labels: { severity: warn }
+        annotations: { summary: "Outbound sends with unknown outcome need reconciliation (delivery_state.status = 'ambiguous')" }
+      - alert: IntakeFailures
+        expr: sum(increase(intake_records_total{result=~"failed.*"}[30m])) > 0
+        labels: { severity: warn }
+        annotations: { summary: "Intake parser/CRM failures" }
+      - alert: DatabaseConnectionsHigh
+        expr: pg_stat_database_numbackends{datname="crmbee"} > 0.7 * pg_settings_max_connections
+        for: 15m
+        labels: { severity: warn }
+        annotations: { summary: "Application database connections above 70% for 15 minutes" }

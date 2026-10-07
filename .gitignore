@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build
+dist/
+build/
+
+# Environment (NEVER commit secrets)
+.env
+.env.local
+.env.production
+.env-previousbuilddump
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+coverage/
+.vitest/
+
+# Logs
+*.log
+logs/
+
+# Media uploads (local dev)
+uploads/
+
+# Drizzle
+drizzle/meta/
+
+# Docker
+docker-compose.override.yml
+teams-app/build/
+teams-app/*.zip
+
+# Local dev media storage
+.data/

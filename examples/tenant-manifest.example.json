@@ -1,0 +1,59 @@
+{
+  "manifestVersion": 1,
+  "slug": "client-001",
+  "name": "Client 001 Consulting",
+  "deploymentId": "shared_01",
+  "twenty": {
+    "workspaceId": "ASSIGNED-DURING-PROVISIONING",
+    "baseUrl": "https://client-001.crm.example.com",
+    "apiTokenRef": "gcp-sm:projects/PROJECT/secrets/client-001-twenty-token/versions/latest",
+    "webhookSecretRef": "gcp-sm:projects/PROJECT/secrets/client-001-twenty-webhook/versions/latest"
+  },
+  "timezone": "Asia/Kolkata",
+  "workingDays": [1, 2, 3, 4, 5],
+  "morningReminderTime": "09:00",
+  "defaultCurrency": "INR",
+  "defaultCountry": "IN",
+  "pipeline": {
+    "defaultInitialStage": "new",
+    "stages": [
+      { "id": "new", "label": "New" },
+      { "id": "qualified", "label": "Qualified" },
+      { "id": "meeting", "label": "Meeting" },
+      { "id": "proposal", "label": "Proposal", "requiredFields": ["amount"] },
+      { "id": "negotiation", "label": "Negotiation" },
+      { "id": "won", "label": "Won", "terminal": "won" },
+      { "id": "lost", "label": "Lost", "terminal": "lost", "requiredFields": ["lostReason"] }
+    ]
+  },
+  "notificationUserEmail": "admin@client-001.example",
+  "quotas": { "maxUploadsPerMinute": 30, "maxAiJobsInFlight": 6 },
+  "retention": { "draftExpirySeconds": 1800, "mediaRetentionDays": 30, "auditRetentionDays": 365 },
+  "users": [
+    { "displayName": "Asha Admin", "email": "admin@client-001.example", "role": "client_admin", "preferredReminderChannel": "teams" },
+    { "displayName": "Meera Manager", "email": "meera@client-001.example", "role": "manager", "teamId": "north", "managedTeamIds": ["north"] },
+    { "displayName": "Sam Seller", "email": "sam@client-001.example", "role": "salesperson", "teamId": "north", "preferredReminderChannel": "whatsapp" }
+  ],
+  "intakeSources": [
+    {
+      "sourceId": "client-001-contact-us",
+      "type": "email_forward",
+      "formLabel": "Contact us",
+      "intakeAlias": "k7f3q9x2@intake.example.com",
+      "parsingRules": {
+        "parserVersion": "2026-09-01",
+        "allowedSenders": ["@mailer.client-001.example"],
+        "subjectPattern": "New enquiry",
+        "fieldAliases": {
+          "name": ["Name", "Full name"], "email": ["Email", "E-mail"], "phone": ["Phone", "Mobile"],
+          "company": ["Company", "Organisation"], "message": ["Message", "Enquiry"], "submissionId": ["Submission ID"]
+        },
+        "requiredFields": ["name", "email", "message"],
+        "templateMarkers": ["Message", "Email"],
+        "defaultCountry": "IN"
+      },
+      "crmRouting": { "initialStage": "new", "sourceTag": "Website", "ownerEmail": "sam@client-001.example", "mode": "auto", "repeatPolicy": "review" },
+      "followUp": { "taskDelayWorkingDays": 1, "notify": true }
+    }
+  ]
+}

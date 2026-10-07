@@ -1,0 +1,75 @@
+openapi: 3.0.3
+info:
+  title: CRM Bee API
+  version: 1.0.0
+  description: Conversational CRM service. Webhook routes are provider-authenticated; employee routes use a bearer JWT validated against live membership; admin routes use the operator API key.
+servers: [{ url: https://bee.example.com }]
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+    adminKey: { type: apiKey, in: header, name: x-api-key }
+    waSignature: { type: apiKey, in: header, name: x-hub-signature-256 }
+    formSignature: { type: apiKey, in: header, name: x-signature }
+  schemas:
+    Error:
+      type: object
+      properties: { statusCode: { type: integer }, code: { type: string }, message: { type: string }, timestamp: { type: string }, correlationId: { type: string } }
+    ConfirmRequest:
+      type: object
+      additionalProperties: false
+      required: [version, hash]
+      properties: { version: { type: integer, minimum: 1 }, hash: { type: string, pattern: '^[0-9a-f]{8,64}$' } }
+    Draft:
+      type: object
+      properties: { id: { type: string, format: uuid }, state: { type: string, enum: [collecting, awaiting_confirmation, committing, committed, cancelled, expired, needs_repair] }, version: { type: integer }, hash: { type: string, nullable: true }, expiresAt: { type: string, format: date-time }, operationId: { type: string, format: uuid, nullable: true }, kind: { type: string } }
+    Operation:
+      type: object
+      properties: { id: { type: string, format: uuid }, reference: { type: string, example: OP-1A2B3C4D }, type: { type: string }, state: { type: string, enum: [pending, in_progress, committed, failed, needs_repair] }, saved: { type: array, items: { type: string } }, pending: { type: array, items: { type: string } }, failed: { type: array, items: { type: string } }, result: { type: object }, error: { type: object, properties: { message: { type: string } } } }
+    InboundEmail:
+      type: object
+      additionalProperties: false
+      required: [eventId, recipient, rawEmailBase64]
+      properties: { eventId: { type: string }, recipient: { type: string, format: email }, rawEmailBase64: { type: string }, receivedAt: { type: string, format: date-time }, auth: { type: object } }
+    FormEvent:
+      type: object
+      additionalProperties: false
+      required: [fields]
+      properties: { submissionId: { type: string }, submittedAt: { type: string, format: date-time }, fields: { type: object, additionalProperties: true } }
+paths:
+  /health: { get: { summary: Liveness, responses: { '200': { description: ok } } } }
+  /health/ready: { get: { summary: Readiness (database, queue, redis, storage), responses: { '200': { description: ready }, '503': { description: not ready } } } }
+  /health/detailed: { get: { summary: Operator diagnostics, security: [{ adminKey: [] }], responses: { '200': { description: queue depths, dead letters, schedule lag, mailbox health } } } }
+  /metrics: { get: { summary: Prometheus metrics, security: [{ bearer: [] }, { adminKey: [] }], responses: { '200': { description: text exposition } } } }
+  /webhooks/whatsapp:
+    get: { summary: Meta verification handshake, parameters: [{ name: hub.mode, in: query, schema: { type: string } }, { name: hub.verify_token, in: query, schema: { type: string } }, { name: hub.challenge, in: query, schema: { type: string } }], responses: { '200': { description: challenge echoed }, '403': { description: bad token } } }
+    post: { summary: Inbound messages and delivery receipts, security: [{ waSignature: [] }], responses: { '200': { description: durably accepted (duplicates suppressed) }, '401': { description: invalid signature } } }
+  /webhooks/teams: { post: { summary: Bot Framework activity (Authorization is the Microsoft JWT), responses: { '200': { description: accepted }, '401': { description: invalid token } } } }
+  /webhooks/twenty/{tenantSlug}: { post: { summary: Twenty change event; triggers reconciliation (payload is not trusted), parameters: [{ name: tenantSlug, in: path, required: true, schema: { type: string } }], responses: { '202': { description: queued }, '401': { description: invalid signature } } } }
+  /intake/email/{provider}: { post: { summary: Authenticated inbound form email, security: [{ formSignature: [] }], parameters: [{ name: provider, in: path, required: true, schema: { type: string } }], requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/InboundEmail' } } } }, responses: { '202': { description: accepted | duplicate | quarantined } } } }
+  /intake/forms/{sourceId}: { post: { summary: Signed direct form event, security: [{ formSignature: [] }], parameters: [{ name: sourceId, in: path, required: true, schema: { type: string } }], requestBody: { content: { application/json: { schema: { $ref: '#/components/schemas/FormEvent' } } } }, responses: { '202': { description: accepted | duplicate } } } }
+  /drafts/{id}: { get: { summary: Draft status, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Draft' } } } }, '404': { description: not found (also for other tenants) } } } }
+  /drafts/{id}/confirm:
+    post:
+      summary: Confirm a draft (actor, tenant, version and hash must match)
+      security: [{ bearer: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }, { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 8, maxLength: 200 } }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ConfirmRequest' } } } }
+      responses: { '200': { description: committing | already_confirmed | stale | rejected }, '400': { description: validation }, '404': { description: not found } }
+  /drafts/{id}/edit: { post: { summary: Apply a correction (no CRM mutation), security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], requestBody: { content: { application/json: { schema: { type: object, required: [text], additionalProperties: false, properties: { text: { type: string, maxLength: 2000 } } } } } }, responses: { '200': { description: result } } } }
+  /drafts/{id}/cancel: { post: { summary: Cancel, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: cancelled | not_active } } } }
+  /operations/{id}: { get: { summary: Scoped operation progress, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { content: { application/json: { schema: { $ref: '#/components/schemas/Operation' } } } }, '404': { description: not found } } } }
+  /intake/review: { get: { summary: Intake review queue (manager+), security: [{ bearer: [] }], responses: { '200': { description: items }, '403': { description: role } } } }
+  /intake/review/{id}/approve: { post: { summary: Approve (idempotent), security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: state } } } }
+  /intake/review/{id}/reject: { post: { summary: Reject, security: [{ bearer: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: state } } } }
+  /admin/tenants:
+    post: { summary: Provision/re-run a tenant manifest (idempotent), security: [{ adminKey: [] }], parameters: [{ name: dryRun, in: query, schema: { type: boolean } }], responses: { '200': { description: provisioning report }, '422': { description: invalid manifest or unsafe change } } }
+    get: { summary: List tenants, security: [{ adminKey: [] }], responses: { '200': { description: tenants } } }
+  /admin/tenants/{id}/users: { get: { summary: Users and channel bindings, security: [{ adminKey: [] }], parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: users } } } }
+  /admin/tenants/{id}/users/{userId}/enrollment: { post: { summary: Create an expiring single-use enrollment code, security: [{ adminKey: [] }], responses: { '200': { description: code shown once } } } }
+  /admin/tenants/{id}/users/{userId}/revoke: { post: { summary: Revoke (blocks commands, confirmations, reminders), security: [{ adminKey: [] }], responses: { '200': { description: revoked } } } }
+  /admin/tenants/{id}/users/{userId}: { patch: { summary: Change role/team (cancels pending drafts), security: [{ adminKey: [] }], responses: { '200': { description: updated } } } }
+  /admin/tenants/{id}/users/{userId}/token: { post: { summary: Short-lived API token for an active user, security: [{ adminKey: [] }], responses: { '200': { description: token } } } }
+  /admin/tenants/{id}/reconcile: { post: { summary: Run reconciliation now, security: [{ adminKey: [] }], responses: { '200': { description: counts } } } }
+  /admin/dead-letters: { get: { summary: Open dead letters, security: [{ adminKey: [] }], responses: { '200': { description: items } } } }
+  /admin/dead-letters/{id}/retry: { post: { summary: Re-queue (a failed CRM operation is reopened; only missing steps run), security: [{ adminKey: [] }], responses: { '200': { description: requeued } } } }
+  /admin/dead-letters/{id}/resolve: { post: { summary: Mark handled, security: [{ adminKey: [] }], responses: { '200': { description: resolved } } } }

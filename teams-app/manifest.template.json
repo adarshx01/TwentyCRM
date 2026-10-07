@@ -1,0 +1,40 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "{{APP_VERSION}}",
+  "id": "{{TEAMS_APP_ID}}",
+  "developer": {
+    "name": "YlogX",
+    "websiteUrl": "{{WEBSITE_URL}}",
+    "privacyUrl": "{{PRIVACY_URL}}",
+    "termsOfUseUrl": "{{TERMS_URL}}"
+  },
+  "name": { "short": "CRM Bee", "full": "CRM Bee — conversational sales assistant" },
+  "description": {
+    "short": "Capture leads and get daily task reminders from chat.",
+    "full": "CRM Bee lets sales teams capture business cards and voice notes, update opportunities, and receive a morning task digest in a private chat. Every change is previewed and needs your confirmation before it is saved to Twenty CRM."
+  },
+  "icons": { "color": "color.png", "outline": "outline.png" },
+  "accentColor": "#F5B301",
+  "bots": [
+    {
+      "botId": "{{TEAMS_APP_ID}}",
+      "scopes": ["personal", "team", "groupChat"],
+      "supportsFiles": true,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["personal"],
+          "commands": [
+            { "title": "help", "description": "What I can do" },
+            { "title": "Who should I meet today?", "description": "Today's meetings and tasks" },
+            { "title": "Show my overdue follow-ups", "description": "Overdue open tasks" },
+            { "title": "workspace", "description": "Switch client workspace" }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": []
+}

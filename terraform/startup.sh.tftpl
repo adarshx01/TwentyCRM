@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Node bootstrap: install Docker, render /etc/crm-bee/env from Secret Manager, start the stack.
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+if ! command -v docker >/dev/null; then
+  apt-get update -y && apt-get install -y ca-certificates curl gnupg jq
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  echo "deb [signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
+  apt-get update -y && apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+fi
+gcloud auth configure-docker --quiet $(echo "${image}" | cut -d/ -f1)
+secret() { gcloud secrets versions access latest --secret="${prefix}-$1" --project="${project}"; }
+manual() { gcloud secrets versions access latest --secret="${prefix}-$1" --project="${project}" 2>/dev/null || true; }
+install -d -m 0700 /etc/crm-bee
+cat > /etc/crm-bee/env <<ENV
+NODE_ENV=production
+LOG_LEVEL=info
+DATABASE_URL=$(secret db-app-url)
+REDIS_URL=$(secret redis-url)
+S3_ENDPOINT=https://storage.googleapis.com
+S3_ACCESS_KEY=$(secret s3-access-key)
+S3_SECRET_KEY=$(secret s3-secret-key)
+S3_BUCKET=${bucket}
+S3_REGION=auto
+JWT_SECRET=$(secret jwt-secret)
+ADMIN_API_KEY=$(secret admin-api-key)
+TWENTY_API_URL=${twenty_url}
+WHATSAPP_VERIFY_TOKEN=$(manual whatsapp-verify-token)
+WHATSAPP_APP_SECRET=$(manual whatsapp-app-secret)
+WHATSAPP_ACCESS_TOKEN=$(manual whatsapp-access-token)
+OPENAI_API_KEY=$(manual openai-api-key)
+EMAIL_WEBHOOK_SECRETS=$(manual email-webhook-secrets)
+METRICS_TOKEN=$(manual metrics-token)
+ENV
+chmod 600 /etc/crm-bee/env
+# Migrations run once per release from the deploy pipeline (owner role), not from every node.
+%{ if run_scheduler ~}
+# Exactly one node runs the cron producers.
+docker run -d --name crm-bee-scheduler --restart always --env-file /etc/crm-bee/env -e APP_ROLE=scheduler -e APP_PORT=3002 --stop-timeout 45 "${image}"
+%{ endif ~}
+docker run -d --name crm-bee-api --restart always --env-file /etc/crm-bee/env -e APP_ROLE=api -e APP_PORT=3000 -p 3000:3000 --stop-timeout 45 --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges "${image}"
+docker run -d --name crm-bee-worker --restart always --env-file /etc/crm-bee/env -e APP_ROLE=worker -e APP_PORT=3001 --stop-timeout 45 --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges "${image}"
