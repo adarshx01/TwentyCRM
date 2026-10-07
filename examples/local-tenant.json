@@ -1,0 +1,81 @@
+{
+  "manifestVersion": 1,
+  "slug": "local-demo",
+  "name": "Local Demo Co",
+  "twenty": {
+    "workspaceId": "b9a619b9-1da7-458a-b645-d695a8c0983c",
+    "baseUrl": "http://localhost:3000",
+    "apiTokenRef": "env:TWENTY_API_KEY"
+  },
+  "timezone": "Asia/Kolkata",
+  "workingDays": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "morningReminderTime": "09:00",
+  "defaultCurrency": "INR",
+  "defaultCountry": "IN",
+  "pipeline": {
+    "defaultInitialStage": "new",
+    "stages": [
+      {
+        "id": "new",
+        "label": "New"
+      },
+      {
+        "id": "qualified",
+        "label": "Qualified"
+      },
+      {
+        "id": "meeting",
+        "label": "Meeting"
+      },
+      {
+        "id": "proposal",
+        "label": "Proposal"
+      },
+      {
+        "id": "negotiation",
+        "label": "Negotiation"
+      },
+      {
+        "id": "won",
+        "label": "Won",
+        "terminal": "won"
+      },
+      {
+        "id": "lost",
+        "label": "Lost",
+        "terminal": "lost"
+      }
+    ]
+  },
+  "users": [
+    {
+      "displayName": "Sam Seller",
+      "email": "sam@demo.local",
+      "role": "salesperson",
+      "teamId": "north",
+      "preferredReminderChannel": "dev"
+    },
+    {
+      "displayName": "Meera Manager",
+      "email": "meera@demo.local",
+      "role": "manager",
+      "teamId": "north",
+      "managedTeamIds": [
+        "north"
+      ],
+      "preferredReminderChannel": "dev"
+    },
+    {
+      "displayName": "Chris CXO",
+      "email": "chris@demo.local",
+      "role": "cxo",
+      "preferredReminderChannel": "dev"
+    }
+  ]
+}

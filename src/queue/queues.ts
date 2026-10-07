@@ -1,4 +1,4 @@
-/** Queue names. Each queue has a sibling `<name>-dlq` dead-letter queue. */
+/** Queue names (BullMQ). Exhausted jobs are recorded in `dead_letters` and kept in BullMQ's failed set. */
 export const QUEUES = {
   AI_EXTRACTION: 'ai-extraction',
   CRM_WRITE: 'crm-write',
@@ -48,7 +48,6 @@ export const QUEUE_DEFAULTS: Record<QueueName, QueueDefaults> = {
   [QUEUES.FANOUT_MAILBOX]: { retryLimit: 1, retryDelay: 30, retryBackoff: false, expireInSeconds: 300 },
 };
 
-export const dlqName = (q: string) => `${q}-dlq`;
 
 export interface JobMeta {
   tenantId?: string;
@@ -64,7 +63,7 @@ export type JobPayload<T> = T & { _m: JobMeta };
 // ── Typed job bodies ───────────────────────────────────────────
 export interface InboundEventJob { eventId: string }                        // inbound_events.id + event body persisted in payload
 export interface MediaDescriptor { mediaId: string; mimeType: string; url?: string; filename?: string; size?: number }
-export interface AiExtractionJob { draftId: string; kind: 'card' | 'voice'; sourceEventId: string; channel: 'whatsapp' | 'teams'; connectionId: string; /** Message timestamp: relative dates resolve against it (CAP-05) */ receivedAt: string; descriptor: MediaDescriptor }
+export interface AiExtractionJob { draftId: string; kind: 'card' | 'voice'; sourceEventId: string; channel: 'whatsapp' | 'teams' | 'dev'; connectionId: string; /** Message timestamp: relative dates resolve against it (CAP-05) */ receivedAt: string; descriptor: MediaDescriptor }
 export interface CrmWriteJob { operationId: string }
 export interface OutboundJob { deliveryId: string }
 export interface ReminderJob { scheduleId: string }
@@ -72,14 +71,3 @@ export interface ReconcileJob { tenantId: string }
 export interface EmailIntakeJob { recordId: string }
 export interface MailboxPollJob { sourceId: string }
 export type EmptyJob = Record<string, never>;
-
-/**
- * Jobs fetched per poll. pg-boss waits out the polling interval after every fetch, so a poller
- * handles at most (batch / interval) jobs per second. Short, I/O-light queues use batches that are
- * processed concurrently; long jobs (CRM writes, AI extraction) stay at 1 so a slow job never
- * delays its neighbours. Throughput = pollers × batch ÷ interval.
- */
-export const WORK_BATCH: Partial<Record<QueueName, number>> = {
-  [QUEUES.INBOUND]: 10,
-  [QUEUES.OUTBOUND]: 10,
-};

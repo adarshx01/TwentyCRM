@@ -5,3 +5,4 @@ allowBuilds:
   cpu-features: false
   ssh2: false
   redis-memory-server: true
+  msgpackr-extract: set this to true or false

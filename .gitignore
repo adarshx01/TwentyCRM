@@ -44,3 +44,10 @@ teams-app/*.zip
 
 # Local dev media storage
 .data/
+infra/twenty/.env
+vendor/
+agent/.venv/
+agent/__pycache__/
+.env.local
+.run/
+.data/

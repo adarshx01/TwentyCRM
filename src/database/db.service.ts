@@ -55,17 +55,6 @@ export class DbService implements OnModuleDestroy {
     });
   }
 
-  /** pg-boss compatible executor bound to a transaction (enqueue atomically with state). */
-  static bossExecutor(tx: Tx): { executeSql(text: string, values: any[]): Promise<{ rows: any[] }> } {
-    return {
-      async executeSql(text: string, values: any[]) {
-        // pg (used by pg-boss) maps undefined → NULL and objects → JSON; postgres-js does neither for untyped params.
-        const rows = await (tx as any).session.client.unsafe(text, values.map((v) => (v === undefined ? null : v !== null && typeof v === 'object' && !(v instanceof Date) && !Buffer.isBuffer(v) && !Array.isArray(v) ? JSON.stringify(v) : v)));
-        return { rows: Array.from(rows) };
-      },
-    };
-  }
-
   async ping(): Promise<boolean> {
     try {
       await this.client`select 1`;

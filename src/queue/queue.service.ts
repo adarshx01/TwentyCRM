@@ -1,21 +1,21 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { createHash } from 'node:crypto';
-import PgBoss from 'pg-boss';
-import postgres from 'postgres';
-import { and, eq, isNull } from 'drizzle-orm';
+import { createHash, randomUUID } from 'node:crypto';
+import { DelayedError, Queue, UnrecoverableError, Worker, type Job } from 'bullmq';
+import Redis from 'ioredis';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 import { APP_CONFIG, type AppConfig } from '../config/configuration';
 import { DbService, type Tx } from '../database/db.service';
-import { deadLetters } from '../database/schema';
-import { currentContext } from '../common/context/request-context';
+import { deadLetters, queueOutbox } from '../database/schema';
+import { currentContext, runWithContext } from '../common/context/request-context';
 import { generateCorrelationId } from '../common/utils/crypto.util';
 import { PermanentError, RetryLaterError, errorMessage } from '../common/errors';
-import { runWithContext } from '../common/context/request-context';
 import { getLogger } from '../observability/logger';
 import { M } from '../observability/metrics';
-import { QUEUES, QUEUE_DEFAULTS, WORK_BATCH, dlqName, type JobMeta, type JobPayload, type QueueName } from './queues';
+import { QUEUES, QUEUE_DEFAULTS, type JobMeta, type JobPayload, type QueueName } from './queues';
 
 export const MAX_DEFERRALS = 200;
 
+/** Stable UUID from a string: the BullMQ job id for an idempotency key (BullMQ forbids ':' in custom ids). */
 export function deterministicUuid(input: string): string {
   const h = createHash('sha256').update(input).digest();
   h[6] = (h[6] & 0x0f) | 0x50;
@@ -32,6 +32,7 @@ export interface SendOptions {
 export interface JobInfo {
   id: string;
   queue: string;
+  /** Attempts already made before this one */
   retryCount: number;
   retryLimit: number;
   meta: JobMeta;
@@ -41,70 +42,66 @@ export type JobHandler<T> = (data: JobPayload<T>, job: JobInfo) => Promise<void>
 export type FinalFailureHook = (data: any, error: string, meta: JobMeta) => Promise<void>;
 
 /**
- * pg-boss wrapper (durable Postgres-backed queue).
+ * Durable job queue on BullMQ (Redis) with a PostgreSQL transactional outbox.
  *
- *  - Jobs carry tenant, user and correlation IDs.
- *  - Enqueue can join the caller's DB transaction (sendInTx) so "state saved"
- *    and "job queued" are atomic.
- *  - Job IDs are derived from an idempotency key, so a repeated enqueue of the
- *    same business event creates one job.
+ *  - Enqueue = INSERT into `queue_outbox` inside the caller's transaction (atomic with the draft/operation
+ *    write), then a relay publishes it to BullMQ. Job ids are derived from the idempotency key, so the
+ *    at-least-once relay can never create two jobs. If Redis is unavailable, rows simply wait.
+ *  - Redis holds no business truth: losing Redis loses only in-flight scheduling, which the journal, leases and
+ *    outbox recover (jobs are re-published / retried idempotently).
+ *  - Retries use BullMQ exponential backoff with jitter; deferrals (rate budget / concurrency) are moved to
+ *    the delayed set without consuming an attempt; permanent errors fail fast; exhausted jobs are written to
+ *    `dead_letters` and stay in BullMQ's failed set for inspection.
+ *  - Worker crashes are recovered by BullMQ's stalled-job detection (lock expiry).
  */
 @Injectable()
 export class QueueService {
-  private boss?: PgBoss;
+  private conn?: Redis;
+  private readonly queues = new Map<QueueName, Queue>();
+  private readonly workers: Worker[] = [];
+  private relayTimer?: NodeJS.Timeout;
+  private relaying?: Promise<number>;
+  private stopped = true;
   private readonly log = getLogger('queue');
   private finalHooks = new Map<string, FinalFailureHook>();
-  private workerIds: string[] = [];
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
-    private readonly dbService: DbService,
+    private readonly db: DbService,
   ) {}
 
-  /** Start pg-boss. `supervise`/`schedule` only on worker/scheduler processes. */
-  async start(opts: { supervise?: boolean; schedule?: boolean } = {}): Promise<void> {
-    if (this.boss) return;
-    // Several processes (api, worker, scheduler, rolling replicas) start at once. pg-boss schema migration and
-    // queue DDL must not interleave (deadlocks), so startup is serialized with a session advisory lock
-    // taken on a direct (non-pooled) connection.
-    const lock = postgres(this.config.database.queueUrl ?? this.config.database.url, { max: 1, onnotice: () => undefined });
-    try {
-      await lock`select pg_advisory_lock(727275)`;
-      const boss = new PgBoss({
-        connectionString: this.config.database.queueUrl ?? this.config.database.url,
-        max: this.config.database.queuePoolMax,
-        application_name: 'crm-bee-queue',
-        supervise: opts.supervise ?? false,
-        schedule: opts.schedule ?? false,
-        migrate: true,
-      });
-      boss.on('error', (e) => this.log.error({ err: e.message }, 'pg-boss error'));
-      await boss.start();
-      for (const name of Object.values(QUEUES)) {
-        const d = QUEUE_DEFAULTS[name];
-        await boss.createQueue(dlqName(name), { name: dlqName(name), retentionDays: 14 });
-        await boss.createQueue(name, { name, ...d, retryDelay: Math.max(1, Math.round(d.retryDelay * this.config.workers.retryDelayMultiplier)), deadLetter: dlqName(name), retentionDays: 7 });
-      }
-      this.boss = boss;
-    } finally {
-      await lock`select pg_advisory_unlock(727275)`.catch(() => undefined);
-      await lock.end({ timeout: 2 });
+  get started(): boolean {
+    return !this.stopped;
+  }
+
+  /** Connect to Redis, create queue handles and start the outbox relay. `schedule` is accepted for call-site symmetry. */
+  async start(_opts: { supervise?: boolean; schedule?: boolean } = {}): Promise<void> {
+    if (!this.stopped) return;
+    this.stopped = false;
+    this.conn = new Redis(this.config.redis.url, { maxRetriesPerRequest: null, enableReadyCheck: true });
+    this.conn.on('error', (e) => this.log.warn({ err: e.message }, 'queue redis error'));
+    for (const name of Object.values(QUEUES)) {
+      this.queues.set(name, new Queue(name, { connection: this.conn, prefix: this.config.queue.prefix }));
     }
+    this.relayTimer = setInterval(() => void this.relay().catch((e) => this.log.warn({ err: errorMessage(e) }, 'outbox relay failed')), this.config.queue.outboxPollMs);
+    this.relayTimer.unref();
+    void this.relay().catch(() => undefined);
   }
 
   async stop(graceMs = 20_000, graceful = true): Promise<void> {
-    if (!this.boss) return;
-    await this.boss.stop({ graceful, timeout: graceMs, wait: true });
-    this.boss = undefined;
-  }
-
-  private get b(): PgBoss {
-    if (!this.boss) throw new Error('QueueService not started');
-    return this.boss;
-  }
-
-  get started(): boolean {
-    return !!this.boss;
+    if (this.stopped) return;
+    this.stopped = true;
+    if (this.relayTimer) clearInterval(this.relayTimer);
+    await this.relaying?.catch(() => undefined);
+    // Graceful: stop fetching, let active jobs finish (bounded). Hard: simulate a crash — locks are NOT released.
+    await Promise.race([
+      Promise.all(this.workers.map((w) => w.close(!graceful))),
+      new Promise((r) => setTimeout(r, graceful ? graceMs : 500)),
+    ]);
+    this.workers.length = 0;
+    await Promise.all([...this.queues.values()].map((q) => q.close().catch(() => undefined)));
+    this.queues.clear();
+    if (this.conn) { this.conn.disconnect(); this.conn = undefined; }
   }
 
   buildMeta(partial: Partial<JobMeta> = {}): JobMeta {
@@ -118,65 +115,103 @@ export class QueueService {
     };
   }
 
+  private q(name: QueueName): Queue {
+    const q = this.queues.get(name);
+    if (!q) throw new Error('QueueService not started');
+    return q;
+  }
+
+  // ── enqueue (outbox) ────────────────────────────────────────
   async send<T extends object>(queue: QueueName, data: T, meta: Partial<JobMeta> = {}, opts: SendOptions = {}, tx?: Tx): Promise<string | null> {
+    if (this.stopped) throw new Error('QueueService not started');
     const m = this.buildMeta(meta);
-    const payload: JobPayload<T> = { ...data, _m: m };
-    // pg-boss validates keys that are present, so only include options that are actually set.
-    const sendOpts: PgBoss.SendOptions = {
-      ...(opts.startAfterSeconds && opts.startAfterSeconds > 0 ? { startAfter: opts.startAfterSeconds } : {}),
-      ...(opts.priority !== undefined ? { priority: opts.priority } : {}),
-      ...(m.idempotencyKey ? { id: deterministicUuid(`${queue}:${m.idempotencyKey}`) } : {}),
-      ...(tx ? { db: DbService.bossExecutor(tx) } : {}),
-    };
-    return this.b.send(queue, payload as object, sendOpts);
+    const jobId = m.idempotencyKey ? deterministicUuid(`${queue}:${m.idempotencyKey}`) : randomUUID();
+    const row = { queue, jobId, tenantId: m.tenantId ?? null, payload: { ...data, _m: m } as Record<string, unknown>, delayMs: Math.max(0, Math.round((opts.startAfterSeconds ?? 0) * 1000)), priority: opts.priority ?? null };
+    if (tx) {
+      await tx.insert(queueOutbox).values(row);
+      // The caller's transaction commits shortly; publish soon after (the poller is the safety net).
+      setTimeout(() => void this.relay().catch(() => undefined), 40).unref();
+    } else {
+      await this.db.systemTx((t) => t.insert(queueOutbox).values(row));
+      await this.relay().catch((e) => this.log.warn({ err: errorMessage(e) }, 'immediate relay failed; poller will retry'));
+    }
+    return jobId;
   }
 
   sendInTx<T extends object>(tx: Tx, queue: QueueName, data: T, meta: Partial<JobMeta> = {}, opts: SendOptions = {}): Promise<string | null> {
     return this.send(queue, data, meta, opts, tx);
   }
 
-  /** Register a cron schedule (scheduler role only). */
+  /** Publish pending outbox rows to BullMQ. Safe to run from every process concurrently (SKIP LOCKED). */
+  relay(): Promise<number> {
+    if (this.stopped) return Promise.resolve(0);
+    if (this.relaying) return this.relaying;
+    this.relaying = this.relayOnce().finally(() => { this.relaying = undefined; });
+    return this.relaying;
+  }
+
+  private async relayOnce(): Promise<number> {
+    let total = 0;
+    for (let i = 0; i < 20 && !this.stopped; i++) {
+      const n = await this.db.systemTx(async (tx) => {
+        const rows = await tx.select().from(queueOutbox).orderBy(asc(queueOutbox.createdAt)).limit(200).for('update', { skipLocked: true });
+        for (const r of rows) {
+          const d = QUEUE_DEFAULTS[r.queue as QueueName];
+          const mult = this.config.workers.retryDelayMultiplier;
+          try {
+            await this.q(r.queue as QueueName).add(r.queue, r.payload, {
+              jobId: r.jobId, delay: r.delayMs || undefined, priority: r.priority ?? undefined,
+              attempts: d.retryLimit + 1,
+              backoff: d.retryBackoff ? { type: 'exponential', delay: Math.max(100, Math.round(d.retryDelay * 1000 * mult)), jitter: 0.3 } : { type: 'fixed', delay: Math.max(100, Math.round(d.retryDelay * 1000 * mult)) },
+              removeOnComplete: { age: 7 * 86400, count: 200_000 },
+              removeOnFail: { age: 14 * 86400 },
+            });
+          } catch (e) {
+            await tx.update(queueOutbox).set({ attempts: sql`${queueOutbox.attempts} + 1` }).where(eq(queueOutbox.id, r.id));
+            throw e; // Redis problem: roll back this batch's deletions; rows stay for the next poll
+          }
+          await tx.delete(queueOutbox).where(eq(queueOutbox.id, r.id));
+        }
+        return rows.length;
+      });
+      total += n;
+      if (n < 200) break;
+    }
+    return total;
+  }
+
+  /** Register a repeatable producer (scheduler role). Idempotent: any number of processes may call it. */
   async cron(queue: QueueName, cron: string): Promise<void> {
-    await this.b.schedule(queue, cron, { _m: { correlationId: `cron-${queue}` } } as object);
+    await this.q(queue).upsertJobScheduler(
+      `cron-${queue}`,
+      { pattern: cron },
+      { name: queue, data: { _m: { correlationId: `cron-${queue}` } }, opts: { attempts: QUEUE_DEFAULTS[queue].retryLimit + 1, removeOnComplete: { count: 100 }, removeOnFail: { count: 200 } } },
+    );
   }
 
   onFinalFailure(queue: QueueName, hook: FinalFailureHook): void {
     this.finalHooks.set(queue, hook);
   }
 
-  /**
-   * Register `concurrency` independent pollers for a queue. Each processes one job
-   * at a time, so a slow job never blocks the other slots (no head-of-line batch waits).
-   */
+  // ── consume ─────────────────────────────────────────────────
+  /** One BullMQ worker with real concurrency (no polling slots to tune). */
   async work<T extends object>(queue: QueueName, concurrency: number, handler: JobHandler<T>): Promise<void> {
-    const batch = WORK_BATCH[queue] ?? 1;
-    for (let i = 0; i < concurrency; i++) {
-      const id = await this.b.work<JobPayload<T>>(
-        queue,
-        { batchSize: batch, pollingIntervalSeconds: this.config.workers.pollIntervalSeconds, includeMetadata: true },
-        async (jobs) => {
-          const list = jobs as any[];
-          if (list.length === 1) return this.runJob(queue, list[0], handler);
-          // Run the batch concurrently; fail only the jobs that failed (the rest complete).
-          const results = await Promise.allSettled(list.map((j) => this.runJob(queue, j, handler)));
-          await Promise.all(results.map(async (r, idx) => {
-            if (r.status === 'rejected') await this.b.fail(queue, list[idx].id, { message: errorMessage(r.reason).slice(0, 500) }).catch(() => undefined);
-          }));
-        },
-      );
-      this.workerIds.push(id);
-    }
-    // One dead-letter recorder per queue is enough.
-    const dlq = await this.b.work<JobPayload<T>>(dlqName(queue), { batchSize: 5, pollingIntervalSeconds: 5 }, async (jobs) => {
-      for (const job of jobs) await this.recordDeadLetter(queue, job as any);
+    if (!this.conn) throw new Error('QueueService not started');
+    const worker = new Worker(queue, (job, token) => this.process(queue, job, token, handler as JobHandler<object>), {
+      connection: this.conn, prefix: this.config.queue.prefix, concurrency,
+      lockDuration: this.config.queue.lockDurationMs, stalledInterval: this.config.queue.stalledIntervalMs, maxStalledCount: 2,
     });
-    this.workerIds.push(dlq);
+    worker.on('error', (e) => this.log.warn({ queue, err: e.message }, 'worker error'));
+    worker.on('failed', (job, err) => { if (job) void this.onFailed(queue, job, err).catch((e) => this.log.error({ err: errorMessage(e) }, 'failure handling failed')); });
+    this.workers.push(worker);
+    await worker.waitUntilReady();
   }
 
-  private async runJob<T extends object>(queue: QueueName, job: any, handler: JobHandler<T>): Promise<void> {
-    const payload = job.data as JobPayload<T>;
+  private async process(queue: QueueName, job: Job, token: string | undefined, handler: JobHandler<object>): Promise<void> {
+    const payload = job.data as JobPayload<object>;
     const meta: JobMeta = payload._m ?? { correlationId: generateCorrelationId() };
-    const info: JobInfo = { id: job.id, queue, retryCount: job.retryCount ?? 0, retryLimit: job.retryLimit ?? 0, meta };
+    const retryLimit = (job.opts.attempts ?? 1) - 1;
+    const info: JobInfo = { id: job.id ?? '', queue, retryCount: job.attemptsMade, retryLimit, meta };
     const end = M.jobDuration().startTimer({ queue });
     await runWithContext({ correlationId: meta.correlationId, tenantId: meta.tenantId, userId: meta.userId }, async () => {
       try {
@@ -184,26 +219,22 @@ export class QueueService {
         M.jobResults().inc({ queue, result: 'ok' });
       } catch (e) {
         if (e instanceof RetryLaterError) {
+          // Not a failure: park the job in the delayed set and keep its attempt budget (rate budget / lease busy).
           const deferrals = (meta.deferrals ?? 0) + 1;
-          if (deferrals > MAX_DEFERRALS) {
-            M.jobResults().inc({ queue, result: 'failed' });
-            throw new Error(`deferred too many times: ${e.reason}`);
-          }
-          // Re-enqueue later; completing this job means the deferral is not a failure.
-          const { _m, ...rest } = payload as any;
-          await this.send(queue, rest, { ...meta, deferrals, idempotencyKey: meta.idempotencyKey ? `${meta.idempotencyKey}#d${deferrals}` : undefined }, { startAfterSeconds: Math.max(1, Math.ceil(e.delayMs / 1000)) });
+          if (deferrals > MAX_DEFERRALS) { M.jobResults().inc({ queue, result: 'failed' }); throw new UnrecoverableError(`deferred too many times: ${e.reason}`); }
+          await job.updateData({ ...payload, _m: { ...meta, deferrals } });
+          await job.moveToDelayed(Date.now() + Math.max(1000, e.delayMs), token);
           M.jobResults().inc({ queue, result: 'deferred' });
-          return;
+          throw new DelayedError();
         }
         if (e instanceof PermanentError) {
           M.jobResults().inc({ queue, result: 'permanent' });
-          this.log.error({ queue, jobId: info.id, code: e.code, err: e.message }, 'job failed permanently');
-          await this.writeDeadLetter(queue, info.id, payload, e.message, meta);
-          await this.finalHooks.get(queue)?.(payload, e.message, meta).catch(() => undefined);
-          return;
+          throw new UnrecoverableError(`${e.code}: ${e.message}`);
         }
-        M.jobResults().inc({ queue, result: 'error' });
-        this.log.warn({ queue, jobId: info.id, attempt: info.retryCount, err: errorMessage(e) }, 'job failed; will retry if attempts remain');
+        if (!(e instanceof DelayedError)) {
+          M.jobResults().inc({ queue, result: 'error' });
+          this.log.warn({ queue, jobId: info.id, attempt: info.retryCount, err: errorMessage(e) }, 'job failed; will retry if attempts remain');
+        }
         throw e;
       } finally {
         end();
@@ -211,18 +242,20 @@ export class QueueService {
     });
   }
 
-  private async recordDeadLetter<T extends object>(queue: QueueName, job: any): Promise<void> {
-    const payload = job.data as JobPayload<T>;
+  private async onFailed(queue: QueueName, job: Job, err: Error): Promise<void> {
+    const final = err instanceof UnrecoverableError || job.attemptsMade >= (job.opts.attempts ?? 1);
+    if (!final || err instanceof DelayedError) return;
+    const payload = job.data as JobPayload<object>;
     const meta = payload?._m ?? { correlationId: generateCorrelationId() };
     await runWithContext({ correlationId: meta.correlationId, tenantId: meta.tenantId }, async () => {
-      await this.writeDeadLetter(queue, job.id, payload, 'retries exhausted', meta);
-      await this.finalHooks.get(queue)?.(payload, 'retries exhausted', meta).catch((e) => this.log.error({ err: errorMessage(e) }, 'final-failure hook failed'));
+      await this.writeDeadLetter(queue, job.id ?? '', payload, err.message || 'retries exhausted', meta);
+      await this.finalHooks.get(queue)?.(payload, err.message || 'retries exhausted', meta).catch((e) => this.log.error({ err: errorMessage(e) }, 'final-failure hook failed'));
     });
   }
 
   /** Operator-visible failure record (also used for permanent business failures that complete the job). */
   async writeDeadLetter(queue: string, jobId: string, payload: unknown, error: string, meta: JobMeta): Promise<void> {
-    await this.dbService.systemTx(async (tx) => {
+    await this.db.systemTx(async (tx) => {
       const existing = await tx.select({ id: deadLetters.id }).from(deadLetters).where(and(eq(deadLetters.jobId, jobId), eq(deadLetters.queue, queue), isNull(deadLetters.resolvedAt)));
       if (existing.length) return;
       await tx.insert(deadLetters).values({ tenantId: meta.tenantId ?? null, queue, jobId, payload: redactPayload(payload), error: error.slice(0, 2000), correlationId: meta.correlationId });
@@ -230,27 +263,41 @@ export class QueueService {
     M.deadLetters().inc({ queue });
   }
 
-  /** Queue depth / oldest job age for health and alerts (SEC operational readiness). */
+  // ── introspection ───────────────────────────────────────────
+  async counts(queue: QueueName): Promise<{ waiting: number; active: number; delayed: number; failed: number; completed: number }> {
+    const c = await this.q(queue).getJobCounts('waiting', 'active', 'delayed', 'failed', 'completed', 'prioritized');
+    return { waiting: (c.waiting ?? 0) + (c.prioritized ?? 0), active: c.active ?? 0, delayed: c.delayed ?? 0, failed: c.failed ?? 0, completed: c.completed ?? 0 };
+  }
+
+  /** Ids of registered repeatable producers (cron). */
+  async schedulers(): Promise<string[]> {
+    const out: string[] = [];
+    for (const q of this.queues.values()) for (const s of await q.getJobSchedulers()) out.push(s.key ?? s.name ?? '');
+    return out;
+  }
+
+  async outboxBacklog(): Promise<number> {
+    const [r] = await this.db.systemTx((tx) => tx.select({ n: sql<number>`count(*)::int` }).from(queueOutbox));
+    return r?.n ?? 0;
+  }
+
+  /** Queue depth / oldest job age for health and alerts. */
   async stats(): Promise<Array<{ queue: string; queued: number; active: number; failed: number; oldestAgeSeconds: number }>> {
-    const rows = await this.dbService.client`
-      select name as queue,
-             count(*) filter (where state in ('created','retry'))::int as queued,
-             count(*) filter (where state = 'active')::int as active,
-             count(*) filter (where state = 'failed')::int as failed,
-             coalesce(extract(epoch from (now() - min(created_on) filter (where state in ('created','retry')))), 0)::int as oldest
-        from pgboss.job where name not like '%-dlq' group by name`;
-    const out = rows.map((r) => ({ queue: r.queue as string, queued: r.queued as number, active: r.active as number, failed: r.failed as number, oldestAgeSeconds: r.oldest as number }));
-    for (const r of out) {
-      M.queueDepth().set({ queue: r.queue }, r.queued);
-      M.queueOldestAge().set({ queue: r.queue }, r.oldestAgeSeconds);
+    const out: Array<{ queue: string; queued: number; active: number; failed: number; oldestAgeSeconds: number }> = [];
+    for (const [name, q] of this.queues) {
+      const c = await this.counts(name);
+      const jobs = c.waiting ? await q.getJobs(['waiting'], 0, 4, true) : [];
+      const oldest = jobs.length ? Math.max(0, Math.round((Date.now() - Math.min(...jobs.map((j) => j.timestamp))) / 1000)) : 0;
+      out.push({ queue: name, queued: c.waiting + c.delayed, active: c.active, failed: c.failed, oldestAgeSeconds: oldest });
+      M.queueDepth().set({ queue: name }, c.waiting + c.delayed);
+      M.queueOldestAge().set({ queue: name }, oldest);
     }
     return out;
   }
 
   async ping(): Promise<boolean> {
     try {
-      await this.dbService.client`select 1 from pgboss.version limit 1`;
-      return this.started;
+      return !this.stopped && (await this.conn!.ping()) === 'PONG';
     } catch {
       return false;
     }
@@ -258,8 +305,8 @@ export class QueueService {
 }
 
 /** Dead-letter payloads are operator-visible; drop content-bearing keys. */
-function redactPayload(p: unknown): unknown {
-  if (!p || typeof p !== 'object') return p;
+function redactPayload(p: unknown): Record<string, unknown> {
+  if (!p || typeof p !== 'object') return {};
   const drop = new Set(['text', 'body', 'transcript', 'raw', 'rawEmail', 'html']);
   return JSON.parse(JSON.stringify(p, (k, v) => (drop.has(k) ? '[redacted]' : v)));
 }

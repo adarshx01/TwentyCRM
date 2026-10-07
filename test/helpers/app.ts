@@ -27,10 +27,11 @@ export const WA_PHONE_ID = '1000000001';
 export function testConfig(db: TestDb, twentyUrl: string, storageDir: string, over: Partial<AppConfig> = {}): AppConfig {
   return {
     app: { role: 'all', port: 0, nodeEnv: 'test', logLevel: 'error' },
-    database: { url: db.appUrl, poolMin: 1, poolMax: 8, queueUrl: db.appUrl, queuePoolMax: 6 },
-    redis: { url: 'memory://' },
+    database: { url: db.appUrl, poolMin: 1, poolMax: 8 },
+    redis: { url: process.env.TEST_REDIS_URL! },
+    queue: { prefix: `t${Math.random().toString(36).slice(2, 10)}`, outboxPollMs: 100, lockDurationMs: 4000, stalledIntervalMs: 1000 },
     twenty: { apiUrl: twentyUrl, rateLimit: 1_000_000, timeoutMs: 1500, maxConcurrentWrites: 2 },
-    workers: { aiConcurrency: 4, crmConcurrency: 4, outboundConcurrency: 4, intakeConcurrency: 2, reminderConcurrency: 2, pollIntervalSeconds: 0.5, retryDelayMultiplier: 0.1 },
+    workers: { aiConcurrency: 4, crmConcurrency: 4, outboundConcurrency: 4, intakeConcurrency: 2, reminderConcurrency: 2, retryDelayMultiplier: 0.1 },
     whatsapp: { verifyToken: WA_VERIFY, appSecret: WA_SECRET, accessToken: 'wa-token', phoneNumberId: WA_PHONE_ID, graphVersion: 'v21.0', templateName: 'daily_reminder', templateLanguage: 'en' },
     teams: { appId: 'teams-app', appPassword: 'teams-pass', tenantId: 'bot-tenant' },
     openai: { apiKey: 'test', model: 'm', visionModel: 'v', sttModel: 's', baseUrl: 'http://127.0.0.1:1' },
@@ -40,6 +41,8 @@ export function testConfig(db: TestDb, twentyUrl: string, storageDir: string, ov
     media: { allowedHosts: ['graph.facebook.com'] },
     email: { webhookSecrets: { testmail: 'email-secret' } },
     observability: { metricsToken: 'metrics-token' },
+    agent: {},
+    dev: { channel: false },
     security: { jwtSecret: JWT_SECRET, adminApiKey: ADMIN_KEY },
     retention: { draftExpirySeconds: 1800, mediaCleanupHours: 24, mediaRetentionDays: 30, auditRetentionDays: 365, logRetentionDays: 30 },
     ...over,

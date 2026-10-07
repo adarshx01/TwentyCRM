@@ -150,14 +150,16 @@ DROP TRIGGER IF EXISTS drafts_terminal ON drafts;
 CREATE TRIGGER drafts_terminal BEFORE UPDATE ON drafts
   FOR EACH ROW EXECUTE FUNCTION drafts_terminal_guard();
 
--- Grants for the runtime role when it exists (created by infrastructure code).
+-- Grants for the runtime role when it exists (created by infrastructure code). Schema-agnostic: works in `public`
+-- or a dedicated schema (e.g. `crmbee` on Supabase) because it uses the schema the migration runs in.
 DO $$
+DECLARE s text := current_schema();
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'crmbee_app') THEN
-    GRANT USAGE ON SCHEMA public TO crmbee_app;
-    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO crmbee_app;
-    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO crmbee_app;
-    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO crmbee_app;
-    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO crmbee_app;
+    EXECUTE format('GRANT USAGE ON SCHEMA %I TO crmbee_app', s);
+    EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %I TO crmbee_app', s);
+    EXECUTE format('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %I TO crmbee_app', s);
+    EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO crmbee_app', s);
+    EXECUTE format('ALTER DEFAULT PRIVILEGES IN SCHEMA %I GRANT USAGE, SELECT ON SEQUENCES TO crmbee_app', s);
   END IF;
 END $$;

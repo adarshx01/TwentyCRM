@@ -86,8 +86,8 @@ describe('partial failure and recovery through the real queue (AT-13, ACT-05, CA
     await pressButton(env, PHONE, buttonId(lastWithButtons(env, T.users.sam.id), 'Confirm'));
     await waitFor(() => env.whatsapp.texts(T.users.sam.id).slice(before).some((t) => /couldn't save|could not be completed/.test(t)), 60000, 300, 'failure message');
     expect(counts()).toEqual(base); // nothing written, nothing duplicated
-    const [op] = (await db.tenantTx(T.tenantId, (tx) => tx.select().from(operations))).slice(-1);
-    expect(['failed', 'needs_repair']).toContain(op.state);
+    const op = (await db.tenantTx(T.tenantId, (tx) => tx.select().from(operations))).sort((x, y) => y.createdAt.getTime() - x.createdAt.getTime())[0]; // newest
+    await waitFor(async () => ['failed', 'needs_repair'].includes((await db.tenantTx(T.tenantId, (tx) => tx.select().from(operations).where(eq(operations.id, op.id))))[0].state) || undefined, 30000, 300, 'terminal failure state');
     env.twenty.injections = [];
     void name;
   }, 120000);

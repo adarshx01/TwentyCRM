@@ -16,12 +16,18 @@ export const AppConfigSchema = z.object({
     url: z.string().min(1),
     poolMin: z.coerce.number().int().min(1).default(2),
     poolMax: z.coerce.number().int().min(1).default(20),
-    /** Direct (non-PgBouncer) connection for pg-boss; defaults to url */
-    queueUrl: z.string().optional(),
-    queuePoolMax: z.coerce.number().int().min(1).default(8),
   }),
   redis: z.object({
     url: z.string().min(1),
+  }),
+  queue: z.object({
+    /** Key prefix in Redis so a shared instance stays tidy */
+    prefix: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/).default('crmbee'),
+    /** How often the outbox relay polls PostgreSQL for unpublished jobs */
+    outboxPollMs: z.coerce.number().int().min(50).default(500),
+    /** Crash recovery: a worker that stops renewing its lock for this long loses the job to another worker */
+    lockDurationMs: z.coerce.number().int().min(1000).default(60_000),
+    stalledIntervalMs: z.coerce.number().int().min(500).default(15_000),
   }),
   twenty: z.object({
     apiUrl: z.string().min(1),
@@ -36,7 +42,6 @@ export const AppConfigSchema = z.object({
     outboundConcurrency: z.coerce.number().int().min(1).default(15),
     intakeConcurrency: z.coerce.number().int().min(1).default(5),
     reminderConcurrency: z.coerce.number().int().min(1).default(5),
-    pollIntervalSeconds: z.coerce.number().min(0.5).default(1),
     /** Scales queue retry delays (tests use a small value) */
     retryDelayMultiplier: z.coerce.number().min(0.01).default(1),
   }),
@@ -91,6 +96,15 @@ export const AppConfigSchema = z.object({
     otlpEndpoint: z.string().optional(),
     metricsToken: z.string().optional(),
   }),
+  dev: z.object({
+    /** Local development chat channel + web UI at /dev/chat. Refused when NODE_ENV=production. */
+    channel: z.preprocess((v) => v === '1' || v === 'true' || v === true, z.boolean()).default(false),
+  }),
+  agent: z.object({
+    /** Python LangChain conversation agent; when set it replaces the direct OpenAI provider */
+    url: z.string().url().optional(),
+    token: z.string().min(16).optional(),
+  }),
   security: z.object({
     jwtSecret: z.string().min(32),
     adminApiKey: z.string().min(32),
@@ -122,11 +136,15 @@ export function loadConfig(): AppConfig {
       url: process.env.DATABASE_URL,
       poolMin: process.env.DATABASE_POOL_MIN,
       poolMax: process.env.DATABASE_POOL_MAX,
-      queueUrl: process.env.QUEUE_DATABASE_URL || undefined,
-      queuePoolMax: process.env.QUEUE_POOL_MAX,
     },
     redis: {
       url: process.env.REDIS_URL,
+    },
+    queue: {
+      prefix: process.env.QUEUE_PREFIX,
+      outboxPollMs: process.env.QUEUE_OUTBOX_POLL_MS,
+      lockDurationMs: process.env.QUEUE_LOCK_DURATION_MS,
+      stalledIntervalMs: process.env.QUEUE_STALLED_INTERVAL_MS,
     },
     twenty: {
       apiUrl: process.env.TWENTY_API_URL,
@@ -140,7 +158,6 @@ export function loadConfig(): AppConfig {
       outboundConcurrency: process.env.WORKER_OUTBOUND_CONCURRENCY,
       intakeConcurrency: process.env.WORKER_INTAKE_CONCURRENCY,
       reminderConcurrency: process.env.WORKER_REMINDER_CONCURRENCY,
-      pollIntervalSeconds: process.env.WORKER_POLL_INTERVAL_SECONDS,
       retryDelayMultiplier: process.env.WORKER_RETRY_DELAY_MULTIPLIER,
     },
     whatsapp: process.env.WHATSAPP_VERIFY_TOKEN ? {
@@ -181,6 +198,8 @@ export function loadConfig(): AppConfig {
       otlpEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT || undefined,
       metricsToken: process.env.METRICS_TOKEN || undefined,
     },
+    dev: { channel: process.env.DEV_CHANNEL },
+    agent: { url: process.env.AGENT_URL || undefined, token: process.env.AGENT_TOKEN || undefined },
     security: {
       jwtSecret: process.env.JWT_SECRET,
       adminApiKey: process.env.ADMIN_API_KEY,

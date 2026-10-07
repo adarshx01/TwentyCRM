@@ -126,13 +126,15 @@ export class TwentyAdapter implements CrmAdapter {
   async ensureSchema(ctx: TenantContext, pipeline: PipelineConfig): Promise<SchemaReport> {
     const report: SchemaReport = { created: [], existing: [], warnings: [] };
     const res = await this.client.request(ctx, { method: 'GET', path: '/rest/metadata/objects' });
-    let objects: any[] = (firstDataValue(res) as any[]) ?? [];
+    // Real Twenty returns { data: [objects…] }; older/fake shape is { data: { objects: [...] } }.
+    const listed: unknown = Array.isArray((res as any)?.data) ? (res as any).data : firstDataValue(res);
+    let objects: any[] = Array.isArray(listed) ? listed : [];
     const find = (singular: string) => objects.find((o) => o.nameSingular === singular);
 
     const ensureFields = async (objectId: string, existingFields: any[], specs: Array<{ name: string; label: string; type: string; defaultValue?: unknown }>, objName: string) => {
       for (const f of specs) {
         if (existingFields.some((e) => e.name === f.name)) { report.existing.push(`${objName}.${f.name}`); continue; }
-        await this.client.request(ctx, { method: 'POST', path: '/rest/metadata/fields', body: { objectMetadataId: objectId, name: f.name, label: f.label, type: f.type, defaultValue: f.defaultValue ?? undefined } });
+        await this.client.request(ctx, { method: 'POST', path: '/rest/metadata/fields', body: { objectMetadataId: objectId, name: f.name, label: f.label, type: f.type, defaultValue: typeof f.defaultValue === 'string' ? `'${f.defaultValue}'` : (f.defaultValue ?? undefined) } });
         report.created.push(`${objName}.${f.name}`);
       }
     };
@@ -157,7 +159,7 @@ export class TwentyAdapter implements CrmAdapter {
       let changed = merged.some((o: any, i: number) => o.label !== stageField.options[i]?.label);
       for (const d of desired) if (!have.has(d.value)) { merged.push(d); changed = true; }
       if (changed) {
-        await this.client.request(ctx, { method: 'PATCH', path: `/rest/metadata/fields/${stageField.id}`, body: { options: merged } });
+        await this.client.request(ctx, { method: 'PATCH', path: `/rest/metadata/fields/${stageField.id}`, body: { options: merged.map(({ value, label, position, color }: any, i: number) => ({ value, label, color, position: i })) } });
         report.created.push('opportunity.stage.options');
       } else report.existing.push('opportunity.stage.options');
       const extra = (stageField.options ?? []).filter((o: any) => !desired.some((d) => d.value === o.value));
@@ -167,7 +169,8 @@ export class TwentyAdapter implements CrmAdapter {
     let review = find(INTAKE_REVIEW_OBJECT.nameSingular);
     if (!review) {
       const created = await this.client.request(ctx, { method: 'POST', path: '/rest/metadata/objects', body: { nameSingular: INTAKE_REVIEW_OBJECT.nameSingular, namePlural: INTAKE_REVIEW_OBJECT.namePlural, labelSingular: INTAKE_REVIEW_OBJECT.labelSingular, labelPlural: INTAKE_REVIEW_OBJECT.labelPlural } });
-      review = firstDataValue(created) as any;
+      const c: any = created;
+      review = c?.id ? c : (c?.data?.id ? c.data : firstDataValue(created)) as any;
       report.created.push('object intakeReview');
       objects = [...objects, review];
     } else report.existing.push('object intakeReview');

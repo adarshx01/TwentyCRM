@@ -23,11 +23,14 @@ import { OperationJournal } from './crm/operations/operation-journal.service';
 import { ReconciliationService } from './crm/reconciliation.service';
 import { EXTRACTION_PROVIDER } from './extraction/extraction-provider.interface';
 import { OpenAiProvider } from './extraction/openai.provider';
+import { AgentProvider } from './extraction/agent.provider';
 import { ExtractionService } from './extraction/extraction.service';
-import { STORAGE, createStorage } from './media/storage';
+import { STORAGE, createStorage, type StorageProvider } from './media/storage';
 import { SCANNER, createScanner } from './media/scanner';
 import { MediaService } from './media/media.service';
 import { CHANNEL_SENDERS, MEDIA_FETCHERS, type ChannelSenders, type MediaFetchers } from './channels/channel.types';
+import { DevChannel, DevMediaFetcher, DevSender } from './channels/dev/dev.channel';
+import { DevController } from './channels/dev/dev.controller';
 import { WhatsAppSender } from './channels/whatsapp/whatsapp.sender';
 import { WhatsAppMediaFetcher } from './channels/whatsapp/whatsapp.media';
 import { BotFrameworkVerifier, TEAMS_VERIFIER, TeamsMediaFetcher, TeamsSender, TeamsTokenProvider } from './channels/teams/teams.service';
@@ -63,17 +66,18 @@ const infra: Provider[] = [
   { provide: STORAGE, useFactory: (c: AppConfig) => createStorage(c), inject: [APP_CONFIG] },
   { provide: SCANNER, useFactory: (c: AppConfig) => createScanner(c), inject: [APP_CONFIG] },
   { provide: CRM_ADAPTER, useExisting: TwentyAdapter },
-  { provide: EXTRACTION_PROVIDER, useExisting: OpenAiProvider },
+  // The LangChain agent service is used when AGENT_URL is configured; otherwise the direct OpenAI provider.
+  { provide: EXTRACTION_PROVIDER, useFactory: (c: AppConfig, openai: OpenAiProvider, agent: AgentProvider) => (c.agent.url ? agent : openai), inject: [APP_CONFIG, OpenAiProvider, AgentProvider] },
   { provide: MAILBOX_PROVIDER, useExisting: GraphMailboxProvider },
   {
     provide: CHANNEL_SENDERS,
-    useFactory: (c: AppConfig, wa: WhatsAppSender, teams: TeamsSender): ChannelSenders => ({ ...(c.whatsapp ? { whatsapp: wa } : {}), ...(c.teams ? { teams } : {}) }),
-    inject: [APP_CONFIG, WhatsAppSender, TeamsSender],
+    useFactory: (c: AppConfig, wa: WhatsAppSender, teams: TeamsSender, dev: DevChannel): ChannelSenders => ({ ...(c.whatsapp ? { whatsapp: wa } : {}), ...(c.teams ? { teams } : {}), ...(dev.enabled ? { dev: new DevSender(dev) } : {}) }),
+    inject: [APP_CONFIG, WhatsAppSender, TeamsSender, DevChannel],
   },
   {
     provide: MEDIA_FETCHERS,
-    useFactory: (c: AppConfig, wa: WhatsAppMediaFetcher, teams: TeamsMediaFetcher): MediaFetchers => ({ ...(c.whatsapp ? { whatsapp: wa } : {}), ...(c.teams ? { teams } : {}) }),
-    inject: [APP_CONFIG, WhatsAppMediaFetcher, TeamsMediaFetcher],
+    useFactory: (c: AppConfig, wa: WhatsAppMediaFetcher, teams: TeamsMediaFetcher, dev: DevChannel, storage: StorageProvider): MediaFetchers => ({ ...(c.whatsapp ? { whatsapp: wa } : {}), ...(c.teams ? { teams } : {}), ...(dev.enabled ? { dev: new DevMediaFetcher(storage) } : {}) }),
+    inject: [APP_CONFIG, WhatsAppMediaFetcher, TeamsMediaFetcher, DevChannel, STORAGE],
   },
   { provide: TEAMS_VERIFIER, useFactory: (c: AppConfig) => (c.teams ? new BotFrameworkVerifier(c.teams.appId) : null), inject: [APP_CONFIG] },
 ];
@@ -81,7 +85,7 @@ const infra: Provider[] = [
 const domain: Provider[] = [
   WorkspaceLimiter, QueueService, AuditService, TenantService, QuotaService, IdentityService,
   TwentyClient, TwentyAdapter, ActionAuthorizer, StepExecutor, OperationEffects, OperationJournal, ReconciliationService,
-  OpenAiProvider, ExtractionService, MediaService, WhatsAppSender, WhatsAppMediaFetcher, TeamsTokenProvider, TeamsSender, TeamsMediaFetcher,
+  DevChannel, OpenAiProvider, AgentProvider, ExtractionService, MediaService, WhatsAppSender, WhatsAppMediaFetcher, TeamsTokenProvider, TeamsSender, TeamsMediaFetcher,
   OutboundService, DraftService, ConfirmationService, DuplicateDetector, MutationBuilder, ReplyService, ConversationService, ReportsService,
   SchedulePlanner, DigestService, SchedulerService, InboundService, IntakeService, AssignmentService, GraphMailboxProvider, MailboxPoller,
   MaintenanceService, TenantProvisioningService, WorkersService,
@@ -93,7 +97,7 @@ class CoreModule {}
 
 @Module({
   imports: [ConfigModule, DatabaseModule, CoreModule],
-  controllers: [WebhooksController, ApiController, AdminController, IntakeWebhookController, HealthController],
+  controllers: [WebhooksController, ApiController, AdminController, IntakeWebhookController, HealthController, DevController],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_GUARD, useClass: AuthGuard },

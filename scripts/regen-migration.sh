@@ -6,6 +6,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 rm -rf migrations/generated
 npx drizzle-kit generate --config drizzle.config.ts >/dev/null
-sed 's/--> statement-breakpoint//' migrations/generated/0000_*.sql > migrations/0001_schema.sql
+sed -e 's/--> statement-breakpoint//' -e 's/"public"\.//g' migrations/generated/0000_*.sql > migrations/0001_schema.sql
 rm -rf migrations/generated
 echo "regenerated migrations/0001_schema.sql"

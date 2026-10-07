@@ -188,7 +188,7 @@ export class IdentityService {
   // ── Enrollment (IAM-02) ─────────────────────────────────────
 
   /** Create an expiring single-use code to be delivered through an authenticated company process. */
-  async createEnrollment(input: { tenantId: string; userId: string; channel: 'whatsapp' | 'teams'; expectedExternalId?: string; createdBy: string; ttlMinutes?: number }): Promise<{ code: string; expiresAt: Date }> {
+  async createEnrollment(input: { tenantId: string; userId: string; channel: 'whatsapp' | 'teams' | 'dev'; expectedExternalId?: string; createdBy: string; ttlMinutes?: number }): Promise<{ code: string; expiresAt: Date }> {
     const code = newEnrollmentCode();
     const expiresAt = new Date(Date.now() + (input.ttlMinutes ?? 60) * 60_000);
     await this.db.tenantTx(input.tenantId, async (tx) => {

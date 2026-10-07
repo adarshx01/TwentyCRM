@@ -29,8 +29,8 @@ describe('worker restart mid-operation (AT-13, §10 reliability)', () => {
     // Hard stop: no graceful drain (SIGKILL-like). The old in-process handler is left to die on its own timeout.
     await queue.stop(200, false);
     await new Promise((r) => setTimeout(r, 2200)); // let the orphaned handler finish failing; it holds no authority any more
-    // The job was claimed by the dead worker; the queue's expiry returns it, and its operation lease expires.
-    await db.client`update pgboss.job set state = 'retry', start_after = now() where name = ${QUEUES.CRM_WRITE} and state = 'active'`;
+    // The job was claimed by the dead worker; its operation lease expires too.
+    // BullMQ's stalled-job check returns the dead worker's job once its lock lapses (lockDuration 4 s in tests).
     await db.tenantTx(T.tenantId, (tx) => tx.update(operations).set({ leaseUntil: sql`now() - interval '1 second'` }).where(eq(operations.id, op.id)));
 
     // A brand-new worker process starts.

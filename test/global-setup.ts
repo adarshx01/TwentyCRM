@@ -4,6 +4,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import postgres from 'postgres';
+import { RedisMemoryServer } from 'redis-memory-server';
 import { runMigrations } from '../src/database/migrate';
 
 /**
@@ -24,7 +25,13 @@ function findBin(): string {
 const freePort = () => new Promise<number>((resolve) => { const s = createServer(); s.listen(0, () => { const p = (s.address() as any).port; s.close(() => resolve(p)); }); });
 
 export default async function setup() {
-  if (process.env.TEST_PG_ADMIN_URL) return; // use an externally provided server (CI service container)
+  // BullMQ needs a real Redis: start one (built by redis-memory-server) unless TEST_REDIS_URL is provided.
+  let redis: RedisMemoryServer | undefined;
+  if (!process.env.TEST_REDIS_URL) {
+    redis = new RedisMemoryServer();
+    process.env.TEST_REDIS_URL = `redis://${await redis.getHost()}:${await redis.getPort()}`;
+  }
+  if (process.env.TEST_PG_ADMIN_URL) return async () => { await redis?.stop(); }; // use an externally provided server (CI service container)
   const bin = findBin();
   const dir = mkdtempSync(join(tmpdir(), 'crmbee-pg-'));
   const port = await freePort();
@@ -42,6 +49,7 @@ export default async function setup() {
   process.env.TEST_PG_PORT = String(port);
 
   return async () => {
+    await redis?.stop();
     spawnSync(join(bin, 'pg_ctl'), ['-D', join(dir, 'data'), '-m', 'immediate', 'stop'], { stdio: 'ignore' });
     rmSync(dir, { recursive: true, force: true });
   };

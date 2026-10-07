@@ -99,7 +99,7 @@ describe('concurrency, protection of Twenty, and fairness (ACT-03, SYNC-04, TEN-
     expect(latency).toBeLessThan(15000);
     // uploads beyond the tenant quota are refused with a friendly message instead of piling up
     await waitFor(() => env.whatsapp.sent.some((m) => m.target.tenantId === A.tenantId && /Too many uploads/.test(m.content.kind === 'reply' ? m.content.text : '')), 30000, 200, 'upload quota message');
-    const queued = await db.client`select count(*)::int as n from pgboss.job where name = ${QUEUES.AI_EXTRACTION} and state in ('created','retry','active')`;
-    expect(Number(queued[0].n)).toBeLessThanOrEqual(30); // never more than the per-minute quota of uploads queued
+    const c = await env.get<QueueService>(QueueService).counts(QUEUES.AI_EXTRACTION);
+    expect(c.waiting + c.active + c.delayed).toBeLessThanOrEqual(30); // never more than the per-minute quota of uploads queued
   }, 90000);
 });

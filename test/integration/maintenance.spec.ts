@@ -69,8 +69,9 @@ describe('retention and scheduler wiring (SEC-04, §11)', () => {
     await q.stop(500).catch(() => undefined);
     await q.start({ supervise: false, schedule: true });
     await env.get<WorkersService>(WorkersService).startScheduler();
-    const rows = await db.client`select name, cron from pgboss.schedule order by name`;
-    const names = rows.map((r: any) => r.name);
-    for (const n of ['schedule-tick', 'schedule-planner', 'maint-frequent', 'maint-hourly', 'maint-daily', 'fanout-reconcile', 'fanout-mailbox']) expect(names).toContain(n);
+    await env.get<WorkersService>(WorkersService).startScheduler(); // idempotent: a second scheduler process changes nothing
+    const ids = await q.schedulers();
+    for (const n of ['schedule-tick', 'schedule-planner', 'maint-frequent', 'maint-hourly', 'maint-daily', 'fanout-reconcile', 'fanout-mailbox']) expect(ids).toContain(`cron-${n}`);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });

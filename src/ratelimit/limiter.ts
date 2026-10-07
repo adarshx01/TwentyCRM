@@ -124,7 +124,7 @@ export class RedisLimiterBackend implements LimiterBackend {
   async consume(key: string, cost: number, ratePerMin: number, burst: number): Promise<RateDecision> {
     if (Date.now() < this.downUntil) return this.fallback.consume(key, cost, Math.max(1, Math.floor(ratePerMin / 4)), Math.max(1, Math.floor(burst / 4)));
     try {
-      const [allowed, retry] = (await this.redis.eval(CONSUME_LUA, 1, `rl:${key}`, cost, ratePerMin, burst, Date.now())) as [number, number];
+      const [allowed, retry] = (await this.redis.eval(CONSUME_LUA, 1, `crmbee:rl:${key}`, cost, ratePerMin, burst, Date.now())) as [number, number];
       return { allowed: allowed === 1, retryAfterMs: retry };
     } catch (e) {
       this.downUntil = Date.now() + 2000;
@@ -137,7 +137,7 @@ export class RedisLimiterBackend implements LimiterBackend {
     const token = `${this.instance}:${process.pid}:${Date.now()}:${++this.seq}`;
     if (Date.now() < this.downUntil) return this.fallback.acquireLease(key, Math.max(1, Math.floor(max / 2)), ttlMs);
     try {
-      const ok = (await this.redis.eval(ACQUIRE_LUA, 1, `lease:${key}`, max, ttlMs, Date.now(), token)) as number;
+      const ok = (await this.redis.eval(ACQUIRE_LUA, 1, `crmbee:lease:${key}`, max, ttlMs, Date.now(), token)) as number;
       return ok === 1 ? token : null;
     } catch {
       this.downUntil = Date.now() + 2000;
@@ -147,7 +147,7 @@ export class RedisLimiterBackend implements LimiterBackend {
 
   async releaseLease(key: string, token: string): Promise<void> {
     try {
-      await this.redis.zrem(`lease:${key}`, token);
+      await this.redis.zrem(`crmbee:lease:${key}`, token);
     } catch {
       await this.fallback.releaseLease(key, token);
     }

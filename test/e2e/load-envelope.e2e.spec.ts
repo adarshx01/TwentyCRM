@@ -19,7 +19,7 @@ describe('load envelope (§10, AT-15)', () => {
   let env: TestEnv; let db: DbService; const tenants: SeededTenant[] = []; const phones: Array<{ phone: string; tenant: SeededTenant; key: string }> = [];
 
   beforeAll(async () => {
-    env = await createTestEnv({ workers: false, config: { workers: { aiConcurrency: 8, crmConcurrency: 8, outboundConcurrency: 10, intakeConcurrency: 2, reminderConcurrency: 10, pollIntervalSeconds: 0.5, retryDelayMultiplier: 0.1 } } });
+    env = await createTestEnv({ workers: false, config: { workers: { aiConcurrency: 8, crmConcurrency: 8, outboundConcurrency: 10, intakeConcurrency: 2, reminderConcurrency: 10, retryDelayMultiplier: 0.1 } } });
     db = env.get(DbService);
     const t0 = Date.now();
     for (let t = 0; t < TENANTS; t++) {

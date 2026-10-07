@@ -7,6 +7,7 @@ import { DbService } from '../../src/database/db.service';
 import { channelBindings, deliveryState, inboundEvents } from '../../src/database/schema';
 import { generateToken } from '../../src/common/guards/auth.guard';
 import { QUEUES } from '../../src/queue/queues';
+import { QueueService } from '../../src/queue/queue.service';
 
 describe('webhooks, authentication and HTTP surface (§9, SEC-01)', () => {
   let env: TestEnv; let T: SeededTenant; let db: DbService;
@@ -23,7 +24,7 @@ describe('webhooks, authentication and HTTP surface (§9, SEC-01)', () => {
   const inject = (o: any) => env.app.inject(o);
   const waPayload = (id: string, text = 'hello') => ({ entry: [{ changes: [{ field: 'messages', value: { metadata: { phone_number_id: WA_PHONE_ID }, messages: [{ id, from: '919800000001', timestamp: '1790000000', type: 'text', text: { body: text } }] } }] }] });
   const post = (payload: any, sig?: string | null) => { const raw = JSON.stringify(payload); return inject({ method: 'POST', url: '/webhooks/whatsapp', headers: { 'content-type': 'application/json', ...(sig === null ? {} : { 'x-hub-signature-256': sig ?? waSign(raw) }) }, payload: raw }); };
-  const queued = async (name: string) => Number((await db.client`select count(*)::int as n from pgboss.job where name = ${name}`)[0].n);
+  const queued = async (name: string) => { await env.get<QueueService>(QueueService).relay(); const c = await env.get<QueueService>(QueueService).counts(name as any); return c.waiting + c.delayed + c.active + c.completed + c.failed; };
 
   describe('WhatsApp', () => {
     it('verification handshake: right token echoes the challenge, wrong token is refused', async () => {

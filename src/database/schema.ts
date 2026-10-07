@@ -70,7 +70,7 @@ export interface TenantSettings {
   /** ISO-3166 alpha-2 used only as a parsing hint for national phone numbers */
   defaultCountry?: string;
   /** Internal Teams destination (CFG-03 notification destination) */
-  notificationDestination?: { channel: 'whatsapp' | 'teams'; userId?: string; teamsChannelId?: string };
+  notificationDestination?: { channel: 'whatsapp' | 'teams' | 'dev'; userId?: string; teamsChannelId?: string };
   reminderCutoffMinutes?: number;
   /** Secret reference for verifying Twenty change-event webhooks (SYNC-02) */
   twentyWebhookSecretRef?: string;
@@ -561,6 +561,23 @@ export const deadLetters = pgTable('dead_letters', {
   resolvedAt: ts('resolved_at'),
   createdAt: createdAt(),
 }, (t) => ({ openIdx: index('dead_letters_open_idx').on(t.resolvedAt, t.createdAt) }));
+
+// ──────────────────────────────────────────────────────────────
+// QUEUE OUTBOX — transactional hand-off to BullMQ (Redis).
+// A job is inserted here in the SAME transaction as the business change, then relayed to BullMQ with a
+// deterministic job id (so at-least-once relay never duplicates work). If Redis is down the rows wait.
+// ──────────────────────────────────────────────────────────────
+export const queueOutbox = pgTable('queue_outbox', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  queue: varchar('queue', { length: 100 }).notNull(),
+  jobId: varchar('job_id', { length: 64 }).notNull(),
+  tenantId: uuid('tenant_id'),
+  payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+  delayMs: integer('delay_ms').notNull().default(0),
+  priority: integer('priority'),
+  attempts: integer('relay_attempts').notNull().default(0),
+  createdAt: createdAt(),
+}, (t) => ({ createdIdx: index('queue_outbox_created_idx').on(t.createdAt) }));
 
 /** Tables carrying tenant_id that must be protected by RLS (TEN-03). */
 export const RLS_TABLES = [

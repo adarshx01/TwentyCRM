@@ -241,6 +241,18 @@ CREATE TABLE "operations" (
 	CONSTRAINT "operations_idempotency_key_unique" UNIQUE("idempotency_key")
 );
 
+CREATE TABLE "queue_outbox" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"queue" varchar(100) NOT NULL,
+	"job_id" varchar(64) NOT NULL,
+	"tenant_id" uuid,
+	"payload" jsonb NOT NULL,
+	"delay_ms" integer DEFAULT 0 NOT NULL,
+	"priority" integer,
+	"relay_attempts" integer DEFAULT 0 NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+);
+
 CREATE TABLE "reconciliation_state" (
 	"tenant_id" uuid NOT NULL,
 	"entity" varchar(30) NOT NULL,
@@ -335,14 +347,14 @@ CREATE TABLE "users" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
-ALTER TABLE "channel_bindings" ADD CONSTRAINT "channel_bindings_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenants"("id") ON DELETE restrict ON UPDATE no action;
-ALTER TABLE "channel_bindings" ADD CONSTRAINT "channel_bindings_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;
-ALTER TABLE "enrollments" ADD CONSTRAINT "enrollments_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenants"("id") ON DELETE restrict ON UPDATE no action;
-ALTER TABLE "enrollments" ADD CONSTRAINT "enrollments_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;
-ALTER TABLE "intake_records" ADD CONSTRAINT "intake_records_source_id_intake_sources_id_fk" FOREIGN KEY ("source_id") REFERENCES "public"."intake_sources"("id") ON DELETE no action ON UPDATE no action;
-ALTER TABLE "intake_sources" ADD CONSTRAINT "intake_sources_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenants"("id") ON DELETE restrict ON UPDATE no action;
-ALTER TABLE "mailbox_checkpoints" ADD CONSTRAINT "mailbox_checkpoints_source_id_intake_sources_id_fk" FOREIGN KEY ("source_id") REFERENCES "public"."intake_sources"("id") ON DELETE no action ON UPDATE no action;
-ALTER TABLE "users" ADD CONSTRAINT "users_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "public"."tenants"("id") ON DELETE restrict ON UPDATE no action;
+ALTER TABLE "channel_bindings" ADD CONSTRAINT "channel_bindings_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE restrict ON UPDATE no action;
+ALTER TABLE "channel_bindings" ADD CONSTRAINT "channel_bindings_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE restrict ON UPDATE no action;
+ALTER TABLE "enrollments" ADD CONSTRAINT "enrollments_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE restrict ON UPDATE no action;
+ALTER TABLE "enrollments" ADD CONSTRAINT "enrollments_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE restrict ON UPDATE no action;
+ALTER TABLE "intake_records" ADD CONSTRAINT "intake_records_source_id_intake_sources_id_fk" FOREIGN KEY ("source_id") REFERENCES "intake_sources"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "intake_sources" ADD CONSTRAINT "intake_sources_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE restrict ON UPDATE no action;
+ALTER TABLE "mailbox_checkpoints" ADD CONSTRAINT "mailbox_checkpoints_source_id_intake_sources_id_fk" FOREIGN KEY ("source_id") REFERENCES "intake_sources"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "users" ADD CONSTRAINT "users_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE restrict ON UPDATE no action;
 CREATE INDEX "audit_tenant_time_idx" ON "audit_log" USING btree ("tenant_id","timestamp");
 CREATE INDEX "audit_correlation_idx" ON "audit_log" USING btree ("correlation_id");
 CREATE INDEX "channel_bindings_tenant_idx" ON "channel_bindings" USING btree ("tenant_id");
@@ -364,6 +376,7 @@ CREATE INDEX "intake_fingerprint_idx" ON "intake_records" USING btree ("source_i
 CREATE INDEX "media_cleanup_idx" ON "media_objects" USING btree ("deleted_at","delete_after");
 CREATE INDEX "operations_tenant_idx" ON "operations" USING btree ("tenant_id","created_at");
 CREATE INDEX "operations_state_idx" ON "operations" USING btree ("state","lease_until");
+CREATE INDEX "queue_outbox_created_idx" ON "queue_outbox" USING btree ("created_at");
 CREATE INDEX "schedules_pending_run_idx" ON "schedules" USING btree ("state","next_run_utc");
 CREATE INDEX "schedules_tenant_user_date_idx" ON "schedules" USING btree ("tenant_id","user_id","local_date");
 CREATE INDEX "stage_history_opp_idx" ON "stage_history" USING btree ("tenant_id","opportunity_id","changed_at");
