@@ -7,6 +7,8 @@ RUN npm install -g pnpm@11.22.0 && pnpm --version
 WORKDIR /app
 
 FROM base AS deps
+# redis-memory-server (a test-only dev dependency) would compile Redis during install; skip that in the image.
+ENV REDISMS_DISABLE_POSTINSTALL=1
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN --mount=type=cache,target=/root/.local/share/pnpm/store pnpm install --frozen-lockfile
 
