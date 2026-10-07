@@ -3,7 +3,7 @@
 name: crmbee
 x-bee: &bee
   image: crmbee/app:${RELEASE:-local}
-  build: { context: ../.., dockerfile: Dockerfile }
+  pull_policy: never   # built once by bee-api (three parallel builds of one tag collide)
   restart: always
   env_file: /opt/crmbee/bee.env
   depends_on: { bee-redis: { condition: service_healthy }, agent: { condition: service_healthy } }
@@ -75,6 +75,7 @@ services:
     healthcheck: { test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8001/health')"], interval: 10s, timeout: 3s, retries: 10, start_period: 20s }
   bee-api:
     <<: *bee
+    build: { context: ../.., dockerfile: Dockerfile }
     environment: { APP_ROLE: api, APP_PORT: "3000" }
     volumes: ["bee-media:/data/media"]
   bee-worker:

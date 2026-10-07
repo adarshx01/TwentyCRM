@@ -10,7 +10,7 @@ TGZ="/tmp/$REL.tgz"
 aws s3 cp "$TGZ" "s3://$BUCKET/releases/$REL.tgz" --only-show-errors
 aws ssm wait instance-information-exists --filters Key=InstanceIds,Values=$INSTANCE 2>/dev/null || true
 CMD=$(aws ssm send-command --instance-ids "$INSTANCE" --document-name AWS-RunShellScript --timeout-seconds 1800 \
-  --parameters "commands=[\"until [ -x /opt/crmbee/apply.sh ]; do sleep 5; done\",\"/opt/crmbee/apply.sh releases/$REL.tgz $BUCKET $AWS_REGION 2>&1 | tail -60\"]" --query Command.CommandId --output text)
+  --parameters "commands=[\"until [ -x /opt/crmbee/apply.sh ]; do sleep 5; done\",\"/opt/crmbee/apply.sh releases/$REL.tgz $BUCKET $AWS_REGION > /opt/crmbee/last-release.log 2>&1; rc=\$?; tail -60 /opt/crmbee/last-release.log; exit \$rc\"]" --query Command.CommandId --output text)
 echo "release $REL rolling out (SSM command $CMD)"
 while true; do
   S=$(aws ssm get-command-invocation --command-id "$CMD" --instance-id "$INSTANCE" --query Status --output text 2>/dev/null || echo Pending)
