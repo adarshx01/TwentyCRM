@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { bee, type DirUser, type Member, type Team } from './api';
+import { bee, type CreatedUser, type DirUser, type Member, type Team } from './api';
 import { Badge, Btn, C, Card, Notice, Row, Select, Table, TextInput, useAction, useLoad } from './ui';
 
 const ROLES = [
@@ -46,9 +46,10 @@ export const Users = () => {
           <Select value={form.teamId} onChange={(v) => setForm({ ...form, teamId: v })} options={teamOptions} />
           {form.role === 'manager' ? <TextInput value={form.managed} onChange={(v) => setForm({ ...form, managed: v })} placeholder="Manages teams (keys, comma-separated)" width={240} /> : null}
           <Btn kind="primary" disabled={act.busy || !form.displayName || !form.email} onClick={() => act.run(async () => {
-            await bee('POST', '/v1/tenant-admin/users', { displayName: form.displayName, email: form.email, role: form.role, teamId: form.teamId || null, ...(form.role === 'manager' ? { managedTeamIds: managedList(form.managed) } : {}) });
+            const created = await bee<CreatedUser>('POST', '/v1/tenant-admin/users', { displayName: form.displayName, email: form.email, role: form.role, teamId: form.teamId || null, ...(form.role === 'manager' ? { managedTeamIds: managedList(form.managed) } : {}) });
             setForm(empty); await reloadAll();
-          }, 'User added. Invite them to this Twenty workspace, then link their Twenty account below.')}>Add</Btn>
+            if (!created.invitation?.sent) throw new Error(`User added, but the Twenty invitation was not sent${created.invitation?.error ? `: ${created.invitation.error}` : ''}. Use "Invite" on their row to retry.`);
+          }, 'User added and invited to this workspace by e-mail. They are linked automatically when they accept.')}>Add &amp; invite</Btn>
         </Row>
         <div style={C.muted}>Salespeople and managers work through Ask AI › Bee, WhatsApp and Teams; Bee limits what they see. CXOs and client admins also get Twenty's own screens.</div>
       </Card>
@@ -82,9 +83,14 @@ export const Users = () => {
               <Badge tone={u.role === 'client_admin' ? 'accent' : 'muted'}>{roleLabel(u.role)}</Badge>,
               <span>{u.teamId ?? '—'}{u.managedTeamIds.length ? <div style={C.muted}>manages {u.managedTeamIds.join(', ')}</div> : null}</span>,
               m ? <span>{m.email ?? m.name} <Btn disabled={act.busy} onClick={() => act.run(async () => { await bee('POST', `/v1/tenant-admin/users/${u.id}/unlink`); await reloadAll(); }, 'Unlinked; their in-CRM access stopped.')}>Unlink</Btn></span>
+                : u.twentyMemberId ? <span style={C.muted}>linked (member no longer listed)</span>
                 : (
-                  <Select value="" onChange={(memberId) => memberId && act.run(async () => { await bee('POST', `/v1/tenant-admin/users/${u.id}/link`, { memberId }); await reloadAll(); }, 'Linked to their Twenty account.')}
-                    options={[{ value: '', label: suggestion ? `Link… (suggested: ${suggestion.email})` : 'Link a Twenty member…' }, ...linkable(u).map((x) => ({ value: x.id, label: `${x.name}${x.email ? ` <${x.email}>` : ''}` }))]} />
+                  <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {u.invitedAt ? <Badge tone="accent">invited</Badge> : null}
+                    {u.status === 'active' ? <Btn disabled={act.busy} onClick={() => act.run(async () => { await bee('POST', `/v1/tenant-admin/users/${u.id}/invite`); await reloadAll(); }, `Invitation e-mailed to ${u.email}.`)}>{u.invitedAt ? 'Resend' : 'Invite'}</Btn> : null}
+                    <Select value="" onChange={(memberId) => memberId && act.run(async () => { await bee('POST', `/v1/tenant-admin/users/${u.id}/link`, { memberId }); await reloadAll(); }, 'Linked to their Twenty account.')}
+                      options={[{ value: '', label: suggestion ? `Link… (suggested: ${suggestion.email})` : 'Link existing member…' }, ...linkable(u).map((x) => ({ value: x.id, label: `${x.name}${x.email ? ` <${x.email}>` : ''}` }))]} />
+                  </span>
                 ),
               <span style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                 {u.channels.filter((c) => c.status === 'active').map((c) => <Badge key={c.channel} tone="ok">{c.channel}</Badge>)}

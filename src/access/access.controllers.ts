@@ -8,6 +8,11 @@ import { ROLE_MATRIX, TENANT_ROLES, permissionsOf, recordScopeOf } from './permi
 import { UserDirectoryService } from './user-directory.service';
 import { OperatorService } from './operator.service';
 import { ArchiveRequestService } from '../approvals/archive-request.service';
+import { ConfirmationService } from '../conversation/confirmation.service';
+import { ConversationService } from '../conversation/conversation.service';
+import { DraftService } from '../conversation/draft.service';
+import { OperationJournal } from '../crm/operations/operation-journal.service';
+import { OperationEffects } from '../crm/operations/operation-effects.service';
 import { IntakeService } from '../intake/intake.service';
 import { TenantConfigService, ConfigPatchSchema } from '../admin/tenant-config.service';
 import { TwentyAccessService } from '../crm/twenty/twenty-access.service';
@@ -25,7 +30,7 @@ const log = getLogger('access');
 const Role = z.enum(TENANT_ROLES);
 const Channel = z.enum(['whatsapp', 'teams', 'web']).nullable();
 const TeamKey = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/);
-const UserCreate = z.object({ displayName: z.string().min(1).max(255), email: z.string().email().max(255), role: Role, teamId: TeamKey.nullable().optional(), managedTeamIds: z.array(TeamKey).max(50).optional(), timezone: z.string().max(63).nullable().optional(), morningReminderTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(), preferredReminderChannel: Channel.optional() }).strict();
+const UserCreate = z.object({ displayName: z.string().min(1).max(255), email: z.string().email().max(255), role: Role, invite: z.boolean().optional(), teamId: TeamKey.nullable().optional(), managedTeamIds: z.array(TeamKey).max(50).optional(), timezone: z.string().max(63).nullable().optional(), morningReminderTime: z.string().regex(/^\d{2}:\d{2}$/).nullable().optional(), preferredReminderChannel: Channel.optional() }).strict();
 const UserPatch = UserCreate.partial().strict();
 const Note = z.object({ note: z.string().max(1000).optional() }).strict();
 
@@ -35,7 +40,55 @@ const Note = z.object({ note: z.string().max(1000).optional() }).strict();
 @Controller('v1/me')
 @TwentyApp()
 export class MeController {
-  constructor(private readonly directory: UserDirectoryService, private readonly archive: ArchiveRequestService) {}
+  constructor(
+    private readonly directory: UserDirectoryService,
+    private readonly archive: ArchiveRequestService,
+    private readonly drafts: DraftService,
+    private readonly conversation: ConversationService,
+    private readonly confirmation: ConfirmationService,
+    private readonly journal: OperationJournal,
+  ) {}
+
+  // ── my open drafts: the same confirmation contract as chat (ACT-02..ACT-05), from the Bee page ──
+  @Get('drafts')
+  async myDrafts(@Req() req: Req) {
+    const a = actorOf(req);
+    return (await this.drafts.listAwaiting(a.tenant.tenantId, a.user.userId)).map((d) => this.conversation.describeDraft(a.tenant, a.user, d));
+  }
+
+  @Post('drafts/:id/confirm') @HttpCode(200)
+  async confirmDraft(@Req() req: Req, @Param('id', ParseUUIDPipe) id: string, @Body() body: unknown) {
+    const a = actorOf(req);
+    const b = z.object({ version: z.number().int().positive(), hash: z.string().regex(/^[0-9a-f]{8,64}$/) }).strict().parse(body);
+    const r = await this.confirmation.confirm({ tenant: a.tenant, user: a.user, draftId: id, version: b.version, hash: b.hash, idempotencyKey: `page:${id}:${b.version}` });
+    switch (r.status) {
+      case 'started': case 'duplicate': return { status: r.status === 'started' ? 'committing' : 'already_confirmed', operationId: r.operationId, reference: OperationEffects.reference(r.operationId) };
+      case 'not_found': throw new UserFacingError('Draft not found.', 'NOT_FOUND');
+      case 'stale': case 'record_changed': return { status: 'stale', message: 'The draft changed or the record changed after the preview. Open it again and review the latest version.' };
+      case 'rejected': return { status: 'rejected', message: r.message };
+      case 'expired': return { status: 'expired', message: 'This draft expired (30 minutes). Nothing was saved.' };
+      case 'cancelled': return { status: 'cancelled', message: 'This draft was cancelled.' };
+      default: return { status: r.status, message: 'This draft cannot be confirmed right now.' };
+    }
+  }
+
+  @Post('drafts/:id/cancel') @HttpCode(200)
+  async cancelDraft(@Req() req: Req, @Param('id', ParseUUIDPipe) id: string) {
+    const a = actorOf(req);
+    const r = await this.conversation.apiCancel(a.tenant, a.user, id);
+    if (r === 'not_found') throw new UserFacingError('Draft not found.', 'NOT_FOUND');
+    return { status: r };
+  }
+
+  @Get('operations/:id')
+  async myOperation(@Req() req: Req, @Param('id', ParseUUIDPipe) id: string) {
+    const a = actorOf(req);
+    const op = await this.journal.get(a.tenant.tenantId, id);
+    if (!op || op.userId !== a.user.userId) throw new UserFacingError('Operation not found.', 'NOT_FOUND');
+    const p = OperationJournal.describeProgress(op);
+    const res = op.result as { refs?: Array<{ kind: string; label: string; url?: string }> } | null;
+    return { id: op.id, reference: OperationEffects.reference(op.id), state: op.state, saved: p.saved, pending: p.pending, failed: p.failed, refs: op.state === 'committed' ? res?.refs ?? [] : [], error: op.state === 'failed' || op.state === 'needs_repair' ? (op.errorInfo as any)?.message ?? 'The operation could not be completed.' : undefined };
+  }
 
   @Get() @AllowUnlinkedMember()
   async me(@Req() req: Req) {
@@ -135,9 +188,16 @@ export class TenantAdminController {
   @Post('users') @HttpCode(201) @RequirePermission('tenant.users.manage')
   async createUser(@Req() req: Req, @Body() body: unknown) {
     const a = actorOf(req);
-    const u = await this.directory.create(a.tenant.tenantId, UserCreate.parse(body) as any, tag(a));
+    const { invite, ...input } = UserCreate.parse(body);
+    let u = await this.directory.create(a.tenant.tenantId, input as any, tag(a));
+    // IAM-01: the administrator provisions the employee's Twenty membership too; the invitation e-mail goes out now.
+    let invitation: { sent: boolean; error?: string } | null = null;
+    if (invite !== false) {
+      invitation = await this.access.inviteMember(a.tenant, u.email!);
+      if (invitation.sent) { await this.directory.markInvited(a.tenant.tenantId, u.id, tag(a)); u = await this.directory.get(a.tenant.tenantId, u.id); }
+    }
     this.resync(a);
-    return u;
+    return { ...u, invitation };
   }
 
   @Patch('users/:id') @RequirePermission('tenant.users.manage')
@@ -157,9 +217,21 @@ export class TenantAdminController {
       case 'revoke': out = await this.directory.revoke(t, id, tag(a)); break;
       case 'reinstate': out = await this.directory.reinstate(t, id, tag(a)); break;
       case 'unlink': out = await this.directory.unlinkMember(t, id, tag(a)); break;
+      case 'invite': {
+        const u = await this.directory.get(t, id);
+        if (!u.email) throw new UserFacingError('This user has no e-mail address to invite.', 'BAD_USER');
+        if (u.twentyMemberId) throw new UserFacingError('This user is already linked to a Twenty account.', 'BAD_STATE');
+        const r = await this.access.inviteMember(a.tenant, u.email);
+        if (!r.sent) throw new UserFacingError(`The invitation was not sent: ${r.error}`, 'INVITE_FAILED');
+        await this.directory.markInvited(t, id, tag(a));
+        return { sent: true, user: await this.directory.get(t, id) };
+      }
       case 'link': {
         const { memberId } = z.object({ memberId: z.string().min(8).max(64) }).strict().parse(body);
-        if (!(await this.crm.listWorkspaceMembers(a.tenant)).some((m) => m.id === memberId)) throw new UserFacingError('That member is not in this Twenty workspace.', 'NOT_FOUND');
+        const all = await this.crm.listWorkspaceMembers(a.tenant);
+        const member = all.find((m) => m.id === memberId);
+        if (!member) throw new UserFacingError('That member is not in this Twenty workspace.', 'NOT_FOUND');
+        if (this.serviceMember(a)(member)) throw new UserFacingError("That is Bee's own service account, not an employee. Pick the employee's Twenty login.", 'MEMBER_CONFLICT');
         out = await this.directory.linkMember(t, id, memberId, tag(a));
         break;
       }
@@ -173,12 +245,19 @@ export class TenantAdminController {
     return out;
   }
 
-  /** Twenty members with their link status. An e-mail match is shown only as a SUGGESTION; linking is explicit. */
+  /** Bee's own service identity is not an employee: it is never listed, suggested or linkable. */
+  private serviceMember<T extends { email: string | null }>(a: Actor): (m: T) => boolean {
+    const svc = a.tenant.settings.twentyServiceUser?.email.toLowerCase();
+    return (m) => !!svc && m.email?.toLowerCase() === svc;
+  }
+
+  /** Twenty members with their link status. An e-mail match is only a SUGGESTION; linking is explicit. */
   @Get('members') @RequirePermission('tenant.users.manage')
   async members(@Req() req: Req) {
     const a = actorOf(req);
-    const [members, list] = await Promise.all([this.crm.listWorkspaceMembers(a.tenant), this.directory.list(a.tenant.tenantId)]);
-    return members.map((m) => {
+    const [all, list] = await Promise.all([this.crm.listWorkspaceMembers(a.tenant), this.directory.list(a.tenant.tenantId)]);
+    const isService = this.serviceMember(a);
+    return all.filter((m) => !isService(m)).map((m) => {
       const linked = list.find((u) => u.twentyMemberId === m.id);
       const email = m.email?.toLowerCase();
       const suggested = !linked && email ? list.find((u) => !u.twentyMemberId && u.email === email) : undefined;

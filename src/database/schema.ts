@@ -164,6 +164,8 @@ export const users = pgTable('users', {
   morningReminderTime: varchar('user_morning_time', { length: 5 }),
   status: varchar('status', { length: 20 }).notNull().default('active'),
   revokedAt: ts('revoked_at'),
+  /** When a client admin invited this user's e-mail into the Twenty workspace through Bee (attests the mailbox for auto-linking) */
+  twentyInvitedAt: ts('twenty_invited_at'),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => ({

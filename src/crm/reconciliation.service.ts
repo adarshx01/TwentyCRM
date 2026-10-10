@@ -89,7 +89,7 @@ export class ReconciliationService {
 
     // Native Twenty roles follow Bee: re-applies role changes/revocations made in Bee and undoes native drift (IAM-05).
     const access = await this.access.sync(tenant);
-    if (!access.ok || access.memberChanges.length || access.drift.length) this.log.warn({ tenantId, ok: access.ok, changes: access.memberChanges.length, drift: access.drift }, 'twenty access re-applied');
+    if (!access.ok || access.memberChanges.length) this.log.warn({ tenantId, ok: access.ok, changes: access.memberChanges.length, drift: access.drift, error: access.error }, 'twenty access re-applied');
 
     this.log.info({ opportunities: oppCount, tasks: taskCount, stageChanges }, 'reconciliation finished');
     return { opportunities: oppCount, tasks: taskCount, stageChanges };

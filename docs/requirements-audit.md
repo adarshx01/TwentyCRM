@@ -37,17 +37,17 @@ Result of the last full run: see the end of this file.
 
 | Req | Status | Implementation | Verification |
 |---|---|---|---|
-| Role matrix (salesperson/manager/CXO/client admin/operator) and scopes | ✅ | `common/guards/roles.guard.ts`, `common/scope.ts` | `U security`, `E crm-operations`, `I reports` |
+| Role matrix (salesperson/manager/CXO/client admin/operator) and scopes | ✅ | `access/permissions.ts` (explicit capability matrix), `common/scope.ts`, `access/*` (tenant admin, operators, support grants) | `U security`, `I access-control`, `E crm-operations`, `I reports`, live `scripts/verify/role-matrix.mjs` |
 | Archive approval manager+; no permanent delete in chat | ✅ | `MutationBuilder`, `beeArchived` | `E crm-operations` |
-| Disable permanent destruction for ordinary users in Twenty; document native admin powers | 🟡 | `docs/onboarding-checklist.md` | Twenty-side configuration |
-| IAM-01 admin-provisioned binding to verified identity | ✅ | enrollment, `channel_bindings` | `I identity-provisioning` |
+| Disable permanent destruction for ordinary users in Twenty; document native admin powers | ✅ | Bee-managed Twenty roles (`twenty-access.service.ts`): only the native Admin may destroy | `I twenty-access`; live: CXO `destroy` denied |
+| IAM-01 admin-provisioned binding to verified identity | ✅ | enrollment, `channel_bindings`; Twenty membership via Bee invitation + explicit/attested link | `I identity-provisioning`, `I twenty-access`, `I access-control` |
 | IAM-02 expiring single-use code, approver recorded, unknown senders rejected silently | ✅ | `IdentityService.createEnrollment/redeem` | `I identity-provisioning` |
 | IAM-03 Teams tenant+object ID; shared WhatsApp number routes by allow-listed sender, never typed company | ✅ | binding key (channel, connection, external) | `I identity-provisioning`, `I webhook` |
 | IAM-04 multiple memberships need explicit selection; sessions separate; drafts bound to tenant/actor/conversation | ✅ | `conversation_sessions`, `workspace` command, draft binding | `I identity-provisioning`, `E capture-flow` |
 | IAM-05 revoke/role change blocks commands, confirmations, reminders ≤ 5 min | ✅ | live checks in resolve/commit/deliver; `revokeUser`, `changeRole` | `I identity-provisioning`, `I operation-journal`, `I reminder-scheduling`, `E prompt-injection`, `I webhook` |
 | Same scope on search, counts, summaries, cards, media, links, exports, linked records; inaccessible duplicates reveal nothing | ✅ (no export feature exists) | `scopeFilterFor` + post-filter; `DuplicateDetector` hides inaccessible matches | `E capture-edge-cases`, `I reports` |
 | Recheck authorization at read and at commit | ✅ | `ActionAuthorizer` in preview, confirm, worker | `E crm-operations` |
-| Service key ≠ employee; native UI permissions verified separately | 🟡 | middleware enforces; native RLP is G2 | — |
+| Service key ≠ employee; native UI permissions verified separately | ✅ | `Bee · Integration` role for the key (no destroy/roles/settings); Bee applies employee scope; salesperson/manager have no Twenty record access (Bee-only) | `I twenty-access`; live role matrix (native denial) |
 
 ## §5 Capture journey
 

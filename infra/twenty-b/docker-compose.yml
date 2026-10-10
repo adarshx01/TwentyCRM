@@ -1,0 +1,45 @@
+# A second Twenty instance = a second, fully isolated client company. Bee reaches it through the tenant's
+# twenty_base_url (BRD §2: one isolated Twenty workspace per client; separate instances are the strictest form).
+#   docker compose -p crmbee-twenty-b --env-file .env -f docker-compose.yml up -d
+name: crmbee-twenty-b
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment: { POSTGRES_DB: default, POSTGRES_USER: postgres, POSTGRES_PASSWORD: "${PG_DATABASE_PASSWORD}" }
+    volumes: ["db:/var/lib/postgresql/data"]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U postgres -d default"], interval: 5s, timeout: 5s, retries: 20 }
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: ["--maxmemory-policy", "noeviction"]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 5s, retries: 20 }
+  server:
+    image: twentycrm/twenty:${TAG:-latest}
+    restart: unless-stopped
+    ports: ["127.0.0.1:3010:3000"]
+    environment: &env
+      NODE_PORT: "3000"
+      PG_DATABASE_URL: postgres://postgres:${PG_DATABASE_PASSWORD}@db:5432/default
+      SERVER_URL: ${SERVER_URL}
+      REDIS_URL: redis://redis:6379
+      STORAGE_TYPE: local
+      APP_SECRET: ${APP_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      FALLBACK_ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      LOGIC_FUNCTION_TYPE: LOCAL
+      EMAIL_DRIVER: LOGGER
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["data:/app/packages/twenty-server/.local-storage"]
+    depends_on: { db: { condition: service_healthy }, redis: { condition: service_healthy } }
+    healthcheck: { test: "curl --fail http://localhost:3000/healthz", interval: 10s, timeout: 5s, retries: 30, start_period: 60s }
+  worker:
+    image: twentycrm/twenty:${TAG:-latest}
+    restart: unless-stopped
+    command: ["yarn", "worker:prod"]
+    environment: { <<: *env, DISABLE_DB_MIGRATIONS: "true", DISABLE_CRON_JOBS_REGISTRATION: "true" }
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes: ["data:/app/packages/twenty-server/.local-storage"]
+    depends_on: { server: { condition: service_healthy } }
+volumes: { db: {}, data: {} }

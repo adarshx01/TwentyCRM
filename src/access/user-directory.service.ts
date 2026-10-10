@@ -29,6 +29,8 @@ export interface DirectoryUser {
   managedTeamIds: string[];
   status: string;
   twentyMemberId: string | null;
+  /** ISO time an invitation to the Twenty workspace was sent through Bee (null = never) */
+  invitedAt: string | null;
   preferredReminderChannel: string | null;
   timezone: string | null;
   morningReminderTime: string | null;
@@ -57,7 +59,7 @@ export class UserDirectoryService {
       const bindings = await tx.select({ userId: channelBindings.userId, channel: channelBindings.channel, status: channelBindings.status, enrolledAt: channelBindings.enrolledAt }).from(channelBindings).where(eq(channelBindings.tenantId, tenantId));
       return rows.map((u) => ({
         id: u.id, displayName: u.displayName, email: u.email, role: u.role as TenantRole, teamId: u.teamId, managedTeamIds: u.managedTeamIds ?? [], status: u.status,
-        twentyMemberId: u.twentyMemberId, preferredReminderChannel: u.preferredReminderChannel, timezone: u.timezone, morningReminderTime: u.morningReminderTime,
+        twentyMemberId: u.twentyMemberId, invitedAt: u.twentyInvitedAt?.toISOString() ?? null, preferredReminderChannel: u.preferredReminderChannel, timezone: u.timezone, morningReminderTime: u.morningReminderTime,
         channels: bindings.filter((b) => b.userId === u.id).map((b) => ({ channel: b.channel, status: b.status, enrolledAt: b.enrolledAt.toISOString() })),
       }));
     });
@@ -137,6 +139,13 @@ export class UserDirectoryService {
     // Pending confirmations were authorized under the old scope: force a fresh preview (IAM-05).
     if (accessChanged) await this.identity.changeRole(tenantId, userId, {}, actor);
     return this.get(tenantId, userId);
+  }
+
+  async markInvited(tenantId: string, userId: string, actor: string): Promise<void> {
+    await this.db.tenantTx(tenantId, async (tx) => {
+      await tx.update(users).set({ twentyInvitedAt: new Date(), updatedAt: new Date() }).where(and(eq(users.id, userId), eq(users.tenantId, tenantId)));
+      await this.audit.writeTx(tx, { tenantId, userId, action: 'user.invited', resourceType: 'user', resourceId: userId, metadata: { actor } });
+    });
   }
 
   /** Link a Twenty workspace member to a user. One member ↔ one user per tenant (unique index). */

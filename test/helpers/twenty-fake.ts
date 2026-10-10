@@ -40,6 +40,19 @@ export class FakeTwentyWorkspace {
   stageOptions: Array<{ value: string; label: string }> = ['NEW', 'SCREENING', 'MEETING', 'PROPOSAL', 'CUSTOMER'].map((v) => ({ value: v, label: v }));
   objects: Rec[] = [];
   calls: Array<{ method: string; path: string; at: number }> = [];
+  /** Native roles, members' role assignment, workspace settings, API keys and invitations (GraphQL /metadata) */
+  roles: Rec[] = [
+    { id: 'role-admin', label: 'Admin', isEditable: false, canReadAllObjectRecords: true, canUpdateAllObjectRecords: true, canSoftDeleteAllObjectRecords: true, canDestroyAllObjectRecords: true, canUpdateAllSettings: true, canAccessAllTools: true, canBeAssignedToUsers: true, canBeAssignedToApiKeys: true, permissionFlags: [] },
+    { id: 'role-member', label: 'Member', isEditable: true, canReadAllObjectRecords: true, canUpdateAllObjectRecords: true, canSoftDeleteAllObjectRecords: true, canDestroyAllObjectRecords: true, canUpdateAllSettings: false, canAccessAllTools: true, canBeAssignedToUsers: true, canBeAssignedToApiKeys: false, permissionFlags: [] },
+  ];
+  memberRole = new Map<string, string>();
+  settings: Rec = { isPublicInviteLinkEnabled: true, allowImpersonation: true, defaultRoleId: 'role-member' };
+  apiKeys: Rec[] = [];
+  invitations: string[] = [];
+  appVariables: Record<string, string> = {};
+  /** Twenty logins of this workspace: email → password (the Bee service user among them) */
+  logins = new Map<string, string>();
+  hasApp = true;
 
   constructor(readonly name: string) {
     for (const plural of Object.keys(SINGULAR)) this.data[plural] = [];
@@ -134,6 +147,8 @@ export class FakeTwenty {
   workspaces = new Map<string, FakeTwentyWorkspace>();
   tokenToWorkspace = new Map<string, string>();
   rateLimitPerMin = 100;
+  /** user-session tokens issued by the fake sign-in (token → workspace name); they are NOT API keys */
+  sessionTokens = new Map<string, { ws: string; email: string }>();
   private windows = new Map<string, number[]>();
   injections: Injection[] = [];
   /** Delay added to every response (ms) to simulate latency */
@@ -146,6 +161,7 @@ export class FakeTwenty {
 
   addWorkspace(name: string, token: string): FakeTwentyWorkspace {
     const ws = new FakeTwentyWorkspace(name);
+    ws.apiKeys.push({ id: `key-${name}`, token, roleId: 'role-admin' });
     this.workspaces.set(name, ws);
     this.tokenToWorkspace.set(token, name);
     return ws;
@@ -189,8 +205,11 @@ export class FakeTwenty {
     const body = ['POST', 'PATCH', 'PUT'].includes(method) ? await this.readBody(req) : null;
     if (this.latencyMs) await new Promise((r) => setTimeout(r, this.latencyMs));
 
+    if (url.pathname === '/metadata' && body && /getLoginTokenFromCredentials|getAuthTokensFromLoginToken/.test(String(body.query))) {
+      return this.send(res, 200, this.signIn(body));
+    }
     const token = (req.headers.authorization ?? '').replace('Bearer ', '');
-    const wsName = this.tokenToWorkspace.get(token);
+    const wsName = this.tokenToWorkspace.get(token) ?? this.sessionTokens.get(token)?.ws;
     if (!wsName) return this.send(res, 401, { error: 'unauthorized' });
     const ws = this.workspaces.get(wsName)!;
     ws.calls.push({ method, path: url.pathname, at: Date.now() });
@@ -213,9 +232,50 @@ export class FakeTwenty {
       if (inj.mode === 'hang_before_apply') { this.hung.push(res); return; }
     }
 
+    if (url.pathname === '/metadata' && method === 'POST') return this.send(res, 200, this.graphql(ws, token, body ?? {}));
     const result = this.route(ws, method, url, body);
     if (inj?.mode === 'hang_after_apply') { this.hung.push(res); return; }
     this.send(res, result.status, result.body);
+  }
+
+  private signIn(body: Rec): Rec {
+    const q = String(body.query); const v = (body.variables ?? {}) as Rec;
+    if (/getLoginTokenFromCredentials/.test(q)) {
+      for (const [name, w] of this.workspaces) if (w.logins.get(String(v.e)) === v.p) return { data: { getLoginTokenFromCredentials: { loginToken: { token: `lt|${name}|${v.e}` } } } };
+      return { errors: [{ message: 'Wrong password' }] };
+    }
+    const [, ws, email] = String(v.t).split('|');
+    const token = `session-${randomUUID()}`;
+    this.sessionTokens.set(token, { ws, email });
+    return { data: { getAuthTokensFromLoginToken: { tokens: { accessOrWorkspaceAgnosticToken: { token, expiresAt: new Date(Date.now() + 3_600_000).toISOString() } } } } };
+  }
+
+  /** The slice of Twenty's GraphQL /metadata that Bee uses, with Twenty's real caller rules (API keys are limited). */
+  private graphql(ws: FakeTwentyWorkspace, token: string, body: Rec): Rec {
+    const q = String(body.query); const v = (body.variables ?? {}) as Rec;
+    const err = (message: string, subCode = 'PERMISSION_DENIED') => ({ data: null, errors: [{ message, extensions: { subCode } }] });
+    const isKey = this.tokenToWorkspace.has(token);
+    const key = ws.apiKeys.find((k) => k.token === token);
+    const keyRole = key ? ws.roles.find((r) => r.id === key.roleId) : undefined;
+    const keyHasFlag = (f: string) => !!keyRole && (keyRole.label === 'Admin' || keyRole.permissionFlags.some((x: Rec) => x.flag === f));
+    const rolesView = () => ws.roles.map((r) => ({
+      ...r, workspaceMembers: ws.data.workspaceMembers.filter((m) => (ws.memberRole.get(m.id) ?? ws.settings.defaultRoleId) === r.id).map((m) => ({ id: m.id, userEmail: m.userEmail })),
+    }));
+    const userOnly = () => (isKey ? err('This endpoint is not available to this caller', 'FORBIDDEN') : null);
+
+    if (/\bgetRoles\b/.test(q)) { if (isKey && !keyHasFlag('ROLES')) return err('Entity performing the request does not have permission'); return { data: { getRoles: rolesView() } }; }
+    if (/createOneRole/.test(q)) { if (isKey && !keyHasFlag('ROLES')) return err('no permission'); const i = v.i as Rec; ws.roles.push({ id: `role-${randomUUID()}`, isEditable: true, canBeAssignedToApiKeys: false, permissionFlags: [], canAccessAllTools: false, ...i }); return { data: { createOneRole: { id: ws.roles[ws.roles.length - 1].id } } }; }
+    if (/updateOneRole/.test(q)) { const i = v.i as Rec; const r = ws.roles.find((x) => x.id === i.id); if (r) Object.assign(r, i.update); return { data: { updateOneRole: { id: i.id } } }; }
+    if (/upsertPermissionFlags/.test(q)) { const i = v.i as Rec; const r = ws.roles.find((x) => x.id === i.roleId); if (r) r.permissionFlags = (i.permissionFlagKeys as string[]).map((flag) => ({ flag })); return { data: { upsertPermissionFlags: [] } }; }
+    if (/currentWorkspace/.test(q)) return { data: { currentWorkspace: { id: `ws-${ws.name}`, defaultRole: { id: ws.settings.defaultRoleId }, isPublicInviteLinkEnabled: ws.settings.isPublicInviteLinkEnabled, allowImpersonation: ws.settings.allowImpersonation } } };
+    if (/updateWorkspace\(/.test(q)) { const d = userOnly(); if (d) return d; Object.assign(ws.settings, v.d as Rec); return { data: { updateWorkspace: { id: `ws-${ws.name}` } } }; }
+    if (/updateWorkspaceMemberRole/.test(q)) { const d = userOnly(); if (d) return d; ws.memberRole.set(String(v.m), String(v.r)); return { data: { updateWorkspaceMemberRole: { id: v.m } } }; }
+    if (/assignRoleToApiKey/.test(q)) { const d = userOnly(); if (d) return d; const k = ws.apiKeys.find((x) => x.id === v.k); if (k) k.roleId = String(v.r); return { data: { assignRoleToApiKey: true } }; }
+    if (/\bapiKeys\b/.test(q)) return { data: { apiKeys: ws.apiKeys.map((k) => ({ id: k.id, role: { label: ws.roles.find((r) => r.id === k.roleId)?.label ?? null } })) } };
+    if (/sendInvitations/.test(q)) { const d = userOnly(); if (d) return d; for (const e of v.e as string[]) ws.invitations.push(e); return { data: { sendInvitations: { success: true, errors: [] } } }; }
+    if (/findManyApplications/.test(q)) return { data: { findManyApplications: ws.hasApp ? [{ id: `app-${ws.name}`, name: 'CRM Bee' }] : [] } };
+    if (/updateOneApplicationVariable/.test(q)) { ws.appVariables[String(v.k)] = String(v.v); return { data: { updateOneApplicationVariable: true } }; }
+    return err(`fake /metadata: unsupported operation ${q.slice(0, 60)}`, 'UNSUPPORTED');
   }
 
   private route(ws: FakeTwentyWorkspace, method: string, url: URL, body: Rec | null): { status: number; body?: unknown } {

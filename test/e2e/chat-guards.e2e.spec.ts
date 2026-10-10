@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestEnv, waitFor, type TestEnv } from '../helpers/app';
-import { buttonId, confirmLast, lastWithButtons, pressButton, seedRecords, seedTenant, sendText, talk, type SeededTenant } from '../helpers/fixtures';
+import { buttonId, confirmLast, jwtFor, lastWithButtons, pressButton, seedRecords, seedTenant, sendText, talk, type SeededTenant } from '../helpers/fixtures';
 import { DbService } from '../../src/database/db.service';
 import { drafts, schedules } from '../../src/database/schema';
 import { inArray } from 'drizzle-orm';
@@ -76,5 +76,45 @@ describe('rescheduling and draft-targeting guards (AT-06, CAP-02, §6)', () => {
     expect(ws.all('people').map((p: any) => p.name.firstName)).toContain('Alpha');
     expect(ws.all('people').map((p: any) => p.name.firstName)).not.toContain('Beta'); // the other draft stays untouched
     void lastWithButtons; void sendText;
+  });
+
+  it('a read-only question is answered while a draft is open and leaves the draft untouched (ACT-01, CAP-02)', async () => {
+    // Beta's draft is still awaiting confirmation from the previous test.
+    const beta = (await db.tenantTx(T.tenantId, (tx) => tx.select().from(drafts))).filter((d) => d.state === 'awaiting_confirmation');
+    expect(beta.length).toBeGreaterThan(0);
+    env.extraction.when(/find rajesh at abc/i, { intent: 'search', targetQuery: 'Rajesh' });
+    const reply = (await talk(env, T, 'sam', 'Find Rajesh at ABC', AT)).join('\n');
+    expect(reply).toMatch(/Matches for "Rajesh"/);
+    expect(reply).not.toMatch(/open draft/i);
+    const after = (await db.tenantTx(T.tenantId, (tx) => tx.select().from(drafts))).filter((d) => d.state === 'awaiting_confirmation');
+    expect(after.map((d) => d.id).sort()).toEqual(beta.map((d) => d.id).sort());
+    expect(after.map((d) => d.version).sort()).toEqual(beta.map((d) => d.version).sort());
+    // a write-like free text is still not attached to the draft
+    env.extraction.when(/he also likes golf/i, { intent: 'unknown' });
+    expect((await talk(env, T, 'sam', 'he also likes golf', AT)).join('\n')).toMatch(/open draft/i);
+  });
+
+  it('the Bee page lists my open drafts and confirms through the same contract; another user cannot (ACT-02, ACT-05)', async () => {
+    const inject = (method: string, url: string, token: string, payload?: unknown) => env.app.inject({ method: method as any, url, payload: payload as any, headers: { authorization: `Bearer ${token}` } });
+    const mine = await inject('GET', '/v1/me/drafts', jwtFor(T, 'sam'));
+    expect(mine.statusCode).toBe(200);
+    const list = mine.json() as Array<{ id: string; version: number; hash: string; text: string }>;
+    const beta = list.find((d) => /Beta Person/.test(d.text))!;
+    expect(beta).toBeTruthy();
+    expect(beta.text).toMatch(/has NOT been saved yet/);
+    const before = ws.all('opportunities').length;
+    // wrong hash/version: never writes
+    const stale = await inject('POST', `/v1/me/drafts/${beta.id}/confirm`, jwtFor(T, 'sam'), { version: beta.version + 5, hash: beta.hash });
+    expect(stale.json().status).toBe('stale');
+    expect(ws.all('opportunities').length).toBe(before);
+    // right contract: committing, and a repeated click returns the same operation
+    const ok = await inject('POST', `/v1/me/drafts/${beta.id}/confirm`, jwtFor(T, 'sam'), { version: beta.version, hash: beta.hash });
+    expect(ok.json()).toMatchObject({ status: 'committing' });
+    const again = await inject('POST', `/v1/me/drafts/${beta.id}/confirm`, jwtFor(T, 'sam'), { version: beta.version, hash: beta.hash });
+    expect(again.json().operationId).toBe(ok.json().operationId);
+    await waitFor(() => ws.all('opportunities').length === before + 1, 30000, 200, 'beta saved');
+    const op = (await waitFor(async () => { const r = await inject('GET', `/v1/me/operations/${ok.json().operationId}`, jwtFor(T, 'sam')); return r.json().state === 'committed' ? r.json() : null; }, 30000, 300, 'operation committed')) as { refs: unknown[] };
+    expect(op.refs.length).toBeGreaterThan(0);
+    expect(ws.all('opportunities').length).toBe(before + 1); // exactly once
   });
 });

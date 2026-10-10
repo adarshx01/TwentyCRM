@@ -12,6 +12,13 @@ import { OutboundService } from '../../src/outbound/outbound.service';
 import { ReconciliationService } from '../../src/crm/reconciliation.service';
 import { QueueService } from '../../src/queue/queue.service';
 
+/** IST date of today, or of the next working day on a weekend: digests exist only on working days (REM-05). */
+const workday = (): string => {
+  let d = DateTime.now().setZone('Asia/Kolkata').startOf('day');
+  while (d.weekday > 5) d = d.plus({ days: 1 });
+  return d.toISODate()!;
+};
+
 describe('morning digests: scheduling, dispatch, delivery (REM-*, AT-08, AT-09, AT-10)', () => {
   let env: TestEnv; let T: SeededTenant; let db: DbService; let planner: SchedulePlanner; let scheduler: SchedulerService; let digest: DigestService; let outbound: OutboundService; let ws: any;
   const NOW = new Date('2026-09-28T02:00:00Z'); // Mon 07:30 IST, 22:00 Sun in New York
@@ -85,7 +92,7 @@ describe('morning digests: scheduling, dispatch, delivery (REM-*, AT-08, AT-09, 
   });
 
   it('builds the digest from live CRM data: meetings by time, due today, overdue; excludes done/archived (REM-02, REM-06)', async () => {
-    const today = DateTime.now().setZone('Asia/Kolkata').toISODate()!;
+    const today = workday();
     const earlier = DateTime.now().setZone('Asia/Kolkata').minus({ days: 3 }).toISODate()!;
     const p = crypto.randomUUID(); const c = crypto.randomUUID();
     await seedRecords(env, 'digest-co', {
@@ -118,7 +125,7 @@ describe('morning digests: scheduling, dispatch, delivery (REM-*, AT-08, AT-09, 
   });
 
   it('the job runs twice or restarts halfway: each digest is dispatched once (AT-09)', async () => {
-    const today = DateTime.now().setZone('Asia/Kolkata').toISODate()!;
+    const today = workday();
     await seedRecords(env, 'digest-co', { tasks: [task({ title: 'Call back', beeDueDate: today, dueAt: DateTime.fromISO(`${today}T00:00`, { zone: 'Asia/Kolkata' }).toUTC().toISO(), ...own('sam') })] });
     await planner.ensureDigest(T.tenantId, T.users.sam.id, today, DateTime.fromISO(`${today}T08:00`, { zone: 'Asia/Kolkata' }).toJSDate());
     await makeDue();
@@ -136,7 +143,7 @@ describe('morning digests: scheduling, dispatch, delivery (REM-*, AT-08, AT-09, 
   });
 
   it('a worker that died after claiming leaves the row claimed; it is reclaimed and still sends once', async () => {
-    const today = DateTime.now().setZone('Asia/Kolkata').toISODate()!;
+    const today = workday();
     await seedRecords(env, 'digest-co', { tasks: [task({ title: 'Call back', beeDueDate: today, dueAt: DateTime.fromISO(`${today}T00:00`, { zone: 'Asia/Kolkata' }).toUTC().toISO(), ...own('sam') })] });
     await planner.ensureDigest(T.tenantId, T.users.sam.id, today, DateTime.fromISO(`${today}T08:00`, { zone: 'Asia/Kolkata' }).toJSDate());
     await makeDue(); await scheduler.tick('dead-worker');
@@ -149,7 +156,7 @@ describe('morning digests: scheduling, dispatch, delivery (REM-*, AT-08, AT-09, 
   });
 
   it('skips an empty digest, an ineligible (revoked) recipient, and anything past the morning cutoff', async () => {
-    const today = DateTime.now().setZone('Asia/Kolkata').toISODate()!;
+    const today = workday();
     const at = DateTime.fromISO(`${today}T08:00`, { zone: 'Asia/Kolkata' }).toJSDate();
     await planner.ensureDigest(T.tenantId, T.users.sam.id, today, at);
     await makeDue(); // due a minute ago, whatever the wall-clock time of the test run (cutoff is relative to now)
@@ -171,7 +178,7 @@ describe('morning digests: scheduling, dispatch, delivery (REM-*, AT-08, AT-09, 
 
   describe('WhatsApp reply window and templates (WA-02, WA-03, AT-10)', () => {
     async function dueDigest() {
-      const today = DateTime.now().setZone('Asia/Kolkata').toISODate()!;
+      const today = workday();
       await seedRecords(env, 'digest-co', { tasks: [task({ title: 'Call back', beeDueDate: today, dueAt: DateTime.fromISO(`${today}T00:00`, { zone: 'Asia/Kolkata' }).toUTC().toISO(), ...own('sam') })] });
       await planner.ensureDigest(T.tenantId, T.users.sam.id, today, DateTime.fromISO(`${today}T08:00`, { zone: 'Asia/Kolkata' }).toJSDate());
       await makeDue(); // clock-independent: due now, inside the morning cutoff

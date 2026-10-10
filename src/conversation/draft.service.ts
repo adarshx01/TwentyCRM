@@ -81,6 +81,14 @@ export class DraftService {
     return rows.filter((r) => !r.expiresAt || r.expiresAt > now);
   }
 
+  /** Drafts waiting for this user's confirmation, across conversations/channels (for the Bee page). */
+  async listAwaiting(tenantId: string, userId: string, now: Date = new Date()): Promise<DraftRow[]> {
+    const rows = await this.db.tenantTx(tenantId, (tx) =>
+      tx.select().from(drafts).where(and(eq(drafts.userId, userId), eq(drafts.state, 'awaiting_confirmation'))).orderBy(desc(drafts.createdAt)).limit(20),
+    );
+    return rows.filter((r) => !r.expiresAt || r.expiresAt > now);
+  }
+
   /** Run `fn` with the draft row locked; the callback returns the change to persist (or null). */
   async mutate(tenantId: string, id: string, fn: (row: DraftRow, tx: Tx) => Promise<DraftChange | null> | DraftChange | null): Promise<{ row: DraftRow; changed: boolean } | null> {
     return this.db.tenantTx(tenantId, async (tx) => {

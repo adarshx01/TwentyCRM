@@ -12,5 +12,7 @@ export default defineSkill({
 - Pass the user's words unchanged as message. Do not create or edit those records yourself with other tools.
 - Bee replies with a draft or a numbered question. Show its text exactly, including warnings. Nothing is saved until the user replies Confirm.
 - Whatever the user says next while a Bee conversation is open ("1", "2", "confirm", "cancel", a correction such as "phone +91…") goes to ask-bee verbatim as message. Never answer a Bee question yourself and never call the tool with anything but the user's own words.
+- Short replies are never answered by you: "confirm", "yes", "cancel", "edit", a number such as "1" or "2", or a correction ("phone: …") ALWAYS go to ask-bee verbatim — even when this conversation has no earlier Bee exchange, because the open draft lives in Bee, not in this chat.
+- Searches and reports ("find Rajesh at ABC", "who should I meet today", "show my overdue follow-ups") also go to ask-bee.
 - Do not invent details Bee did not return.`,
 });

@@ -1,0 +1,83 @@
+{
+  "manifestVersion": 1,
+  "slug": "client-b",
+  "name": "Client B Foods",
+  "twenty": {
+    "workspaceId": "4c9931e4-4da8-4005-9777-f13a1271eb82",
+    "baseUrl": "http://localhost:3010",
+    "apiTokenRef": "env:TWENTY_B_API_KEY",
+    "serviceUser": {
+      "email": "bee-service@clientb.local",
+      "passwordRef": "env:TWENTY_B_SERVICE_PASSWORD"
+    }
+  },
+  "timezone": "Europe/London",
+  "workingDays": [
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "morningReminderTime": "08:30",
+  "defaultCurrency": "GBP",
+  "defaultCountry": "GB",
+  "pipeline": {
+    "defaultInitialStage": "prospect",
+    "stages": [
+      {
+        "id": "prospect",
+        "label": "Prospect"
+      },
+      {
+        "id": "discovery",
+        "label": "Discovery"
+      },
+      {
+        "id": "quote",
+        "label": "Quote sent"
+      },
+      {
+        "id": "won",
+        "label": "Won",
+        "terminal": "won"
+      },
+      {
+        "id": "lost",
+        "label": "Lost",
+        "terminal": "lost"
+      }
+    ]
+  },
+  "teams": [
+    {
+      "key": "east",
+      "name": "East"
+    }
+  ],
+  "users": [
+    {
+      "displayName": "Client B Admin",
+      "email": "admin@clientb.local",
+      "role": "client_admin",
+      "preferredReminderChannel": "web"
+    },
+    {
+      "displayName": "Bob Manager",
+      "email": "bob@clientb.local",
+      "role": "manager",
+      "teamId": "east",
+      "managedTeamIds": [
+        "east"
+      ],
+      "preferredReminderChannel": "web"
+    },
+    {
+      "displayName": "Beth Seller",
+      "email": "beth@clientb.local",
+      "role": "salesperson",
+      "teamId": "east",
+      "preferredReminderChannel": "web"
+    }
+  ]
+}

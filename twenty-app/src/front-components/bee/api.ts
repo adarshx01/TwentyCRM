@@ -33,7 +33,7 @@ export type Me =
       permissions: Permission[];
     };
 
-export type DirUser = { id: string; displayName: string; email: string | null; role: string; teamId: string | null; managedTeamIds: string[]; status: string; twentyMemberId: string | null; preferredReminderChannel: string | null; channels: Array<{ channel: string; status: string }> };
+export type DirUser = { id: string; displayName: string; email: string | null; role: string; teamId: string | null; managedTeamIds: string[]; status: string; twentyMemberId: string | null; invitedAt: string | null; preferredReminderChannel: string | null; channels: Array<{ channel: string; status: string }> };
 export type Member = { id: string; name: string; email: string | null; linkedUserId: string | null; suggestedUserId: string | null };
 export type Team = { key: string; name: string; status: string; members: number; managers: number };
 export type ArchiveReq = { id: string; targetType: string; targetLabel: string; reason: string | null; state: string; requestedBy: string | null; requestedAt: string; decidedBy: string | null; decidedAt: string | null; decisionNote: string | null; operationReference: string | null };
@@ -42,3 +42,8 @@ export type Grant = { id: string; reason: string; hours: number; state: string; 
 export type AuditEntry = { id: number; at: string; action: string; actor: string; subject: string | null; resourceType: string | null; result: string | null };
 export type Config = { name: string; timezone: string; workingDays: number[]; morningReminderTime: string; defaultCurrency: string; defaultCountry: string | null; configVersion: number; pipeline: { defaultInitialStage: string; stages: Array<{ id: string; label: string; terminal?: string; requiredFields?: string[] }> } };
 export type AccessReport = { ok: boolean; rolesCreated: string[]; rolesUpdated: string[]; workspaceSettingsChanged: string[]; memberChanges: Array<{ email: string | null; from: string | null; to: string }>; drift: string[]; error?: string };
+
+export type CreatedUser = DirUser & { invitation: { sent: boolean; error?: string } | null };
+
+export type OpenDraft = { id: string; version: number; hash: string; kind: string; text: string; expiresAt: string | null };
+export type OperationView = { id: string; reference: string; state: string; saved: string[]; pending: string[]; failed: string[]; refs: Array<{ kind: string; label: string; url?: string }>; error?: string };

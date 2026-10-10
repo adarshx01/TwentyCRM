@@ -31,3 +31,24 @@
 ## Offboarding
 - [ ] Revoke users (`POST …/revoke`) — blocks commands, pending confirmations and reminders immediately.
 - [ ] Set tenant `status` to `suspended`; export data per contract; revoke Twenty API key; delete secrets; run retention purge; keep audit per policy.
+
+
+## Access onboarding (added with the access model — see `access-architecture.md`)
+
+Order matters: **harden the workspace before inviting anyone** (a new Twenty workspace's default role can read, edit and
+destroy everything).
+
+1. **Workspace + keys** (operator): `scripts/twenty-bootstrap.mjs` (admin, workspace, integration key).
+2. **Bee service user** (operator): `scripts/twenty-service-user.mjs`; store its password as a secret and put
+   `twenty.serviceUser` in the manifest. Twenty only lets a *user* assign member roles and change workspace settings.
+3. **Provision** (`POST /admin/tenants`): creates Bee's Twenty roles, sets the default role to *Bee · No access*,
+   disables the public invite link and impersonation, downgrades the integration key to *Bee · Integration*, links the
+   employees listed in the manifest, configures the CRM Bee app with this tenant's own secret.
+4. **Install the CRM Bee app** into the workspace (`twenty apply` with an *admin* deploy key from
+   `scripts/twenty-deploy-key.mjs`; the integration key cannot deploy apps by design), then re-run provisioning once so
+   the app is configured.
+5. **Employees** (client admin, inside Twenty › Bee › Users): *Add & invite* — Twenty e-mails a personal link; when
+   it is accepted Bee links the account and assigns the role automatically. Salespeople and managers use Ask AI › Bee,
+   WhatsApp and Teams; CXOs and client admins also get Twenty's own screens.
+6. **Channels**: issue WhatsApp/Teams enrollment codes from the same page.
+7. **Verify**: `scripts/verify/role-matrix.mjs` (and `isolation.mjs` for two clients).

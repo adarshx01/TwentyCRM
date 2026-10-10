@@ -245,6 +245,12 @@ export class ConversationService {
     return renderCapturePreview(draft, data, action as any, user.displayName, (id) => tenant.pipeline.stages.find((s) => s.id === id)?.label ?? id);
   }
 
+  /** What the employee is being asked to confirm, as plain text (same renderer as chat), for the Bee page. */
+  describeDraft(tenant: TenantContext, user: UserContext, draft: DraftRow): { id: string; version: number; hash: string; kind: string; text: string; expiresAt: string | null } {
+    const data = draft.extractedData as unknown as DraftData;
+    return { id: draft.id, version: draft.version, hash: (draft.contentHash ?? '').slice(0, 8), kind: data.kind, text: this.previewFor(tenant, user, draft).text, expiresAt: draft.expiresAt?.toISOString() ?? null };
+  }
+
   /** The target changed after the preview: re-read, show a fresh preview, require new confirmation (ACT-03). */
   private async refreshAfterRecordChange(ctx: Ctx, draft: DraftRow): Promise<void> {
     const data = draft.extractedData as unknown as DraftData;
@@ -517,7 +523,10 @@ export class ConversationService {
       return this.advance(ctx.tenant, ctx.user, ctx.channel, draft.id, `evt:${ctx.event.providerEventId}`);
     }
     if (linked) return ctx.say("I didn't understand that edit.\n" + this.editHelp());
-    // Never silently attach text to an existing lead (CAP-02).
+    // A read-only question (search / report) neither touches the draft nor needs confirmation (ACT-01): answer it.
+    const intent = await this.classify(ctx, text, false);
+    if (intent && (intent.intent === 'search' || intent.intent === 'summary')) return this.handleNewRequest(ctx, text, intent);
+    // Anything else is never silently attached to an existing lead (CAP-02).
     return ctx.say('You have an open draft. Reply to its preview to change it, say Confirm or Cancel, or start another lead with "new: …".');
   }
 
@@ -540,8 +549,8 @@ export class ConversationService {
     }
   }
 
-  private async handleNewRequest(ctx: Ctx, text: string): Promise<void> {
-    const intent = await this.classify(ctx, text, false);
+  private async handleNewRequest(ctx: Ctx, text: string, known?: LlmIntent): Promise<void> {
+    const intent = known ?? (await this.classify(ctx, text, false));
     if (!intent) return ctx.say("I couldn't understand that just now. Please try again, or send \"help\".");
     const env = this.env(ctx, ctx.event.receivedAt);
     switch (intent.intent) {

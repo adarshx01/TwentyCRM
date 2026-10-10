@@ -62,3 +62,4 @@ infra/twenty/.env
 .env-previousbuilddump
 .state.json
 .admin-password
+infra/twenty-b/.env

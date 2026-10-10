@@ -24,21 +24,30 @@ export interface SeededTenant {
   token: string;
   /** ownerKey = the stable CRM ownership key (the Bee user id); memberId = the user's linked Twenty workspace member */
   users: Record<string, { id: string; phone?: string; aad?: string; ownerKey: string; memberId: string }>;
+  /** Workspace name in the Twenty fake (= slug) */
 }
 
 let tenantSeq = 0;
 
 /** Provision a tenant through the real provisioning service, then bind channel identities. */
-export async function seedTenant(env: TestEnv, opts: { slug?: string; users: SeedUser[]; pipelineStages?: typeof STAGES; timezone?: string; extra?: Record<string, unknown>; defaultCountry?: string; connection?: { wa?: string; teamsTenant?: string } }): Promise<SeededTenant> {
+export async function seedTenant(env: TestEnv, opts: { slug?: string; serviceUser?: boolean; users: SeedUser[]; pipelineStages?: typeof STAGES; timezone?: string; extra?: Record<string, unknown>; defaultCountry?: string; connection?: { wa?: string; teamsTenant?: string } }): Promise<SeededTenant> {
   const n = ++tenantSeq;
   const slug = opts.slug ?? `client-${n}-${Math.random().toString(36).slice(2, 6)}`;
-  const token = `tok-${slug}`;
+  // A JWT-shaped key whose `jti` is the key id, like Twenty's (Bee reads it to find the key's role).
+  const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const token = `${b64({ alg: 'HS256' })}.${b64({ type: 'API_KEY', jti: `key-${slug}` })}.sig`;
   process.env[`TWENTY_TOKEN_${n}_${slug.replace(/-/g, '_')}`] = token;
   const ws = env.twenty.addWorkspace(slug, token);
+  if (opts.serviceUser) {
+    process.env[`TWENTY_SVC_${n}`] = 'svc-password';
+    ws.data.workspaceMembers.push({ id: `m-${slug}-svc`, name: { firstName: 'Bee', lastName: 'service' }, userEmail: `bee-service@${slug}.test`, userId: `tu-${slug}-svc` });
+    ws.memberRole.set(`m-${slug}-svc`, 'role-admin');
+    ws.logins.set(`bee-service@${slug}.test`, 'svc-password');
+  }
   for (const u of opts.users) ws.data.workspaceMembers.push({ id: `m-${slug}-${u.key}`, name: { firstName: u.displayName, lastName: '' }, userEmail: `${u.key}@${slug}.test`, userId: `tu-${slug}-${u.key}`, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
   const refName = `TWENTY_TOKEN_${n}_${slug.replace(/-/g, '_')}`;
   const manifest = {
-    manifestVersion: 1, slug, name: `Client ${slug}`, twenty: { workspaceId: `ws-${slug}`, baseUrl: env.twenty.url, apiTokenRef: `env:${refName}` },
+    manifestVersion: 1, slug, name: `Client ${slug}`, twenty: { workspaceId: `ws-${slug}`, baseUrl: env.twenty.url, apiTokenRef: `env:${refName}`, ...(opts.serviceUser ? { serviceUser: { email: `bee-service@${slug}.test`, passwordRef: `env:TWENTY_SVC_${n}` } } : {}) },
     timezone: opts.timezone ?? 'Asia/Kolkata', workingDays: [1, 2, 3, 4, 5], morningReminderTime: '09:00', defaultCurrency: 'INR', defaultCountry: opts.defaultCountry ?? 'IN',
     pipeline: { stages: opts.pipelineStages ?? STAGES, defaultInitialStage: 'new' },
     users: opts.users.map((u) => ({ displayName: u.displayName, email: `${u.key}@${slug}.test`, role: u.role, twentyMemberId: `m-${slug}-${u.key}`, teamId: u.teamId, managedTeamIds: u.managedTeamIds, timezone: u.timezone, preferredReminderChannel: u.preferredReminderChannel ?? (u.aadId && !u.phone ? 'teams' : 'whatsapp') })),

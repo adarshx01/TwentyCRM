@@ -19,6 +19,7 @@ type RoleSpec = {
   canUpdateAllSettings: boolean;
   canAccessAllTools: boolean;
   canBeAssignedToUsers: boolean;
+  canBeAssignedToApiKeys?: boolean;
   flags: string[];
 };
 
@@ -40,6 +41,17 @@ export const BEE_TWENTY_ROLES: Record<Exclude<keyof typeof TWENTY_ROLE_LABELS, '
   },
 };
 
+/**
+ * The workspace service key (Integration Service Identity, §4): reads and writes CRM records and provisions Bee's
+ * schema, but cannot permanently destroy records, manage roles/members/settings, or install apps. It is NOT an
+ * administrator and does not stand in for an employee: Bee applies the employee's scope to every call it makes.
+ */
+export const INTEGRATION_ROLE = {
+  label: 'Bee · Integration',
+  description: 'Managed by CRM Bee: service identity for the Bee integration key. Records and schema only; no destroy, roles or settings.',
+  spec: { canReadAllObjectRecords: true, canUpdateAllObjectRecords: true, canSoftDeleteAllObjectRecords: true, canDestroyAllObjectRecords: false, canUpdateAllSettings: false, canAccessAllTools: false, canBeAssignedToUsers: false, canBeAssignedToApiKeys: true, flags: ['DATA_MODEL'] } as RoleSpec & { canBeAssignedToApiKeys: boolean },
+};
+
 export interface AccessSyncReport {
   ok: boolean;
   rolesCreated: string[];
@@ -48,6 +60,10 @@ export interface AccessSyncReport {
   /** Settings Bee could not change with its service key (see scripts/twenty-harden.mjs) */
   workspaceSettingsPending?: string[];
   memberChanges: Array<{ memberId: string; email: string | null; from: string | null; to: string }>;
+  /** Members linked automatically because they accepted a Bee invitation */
+  autoLinked?: string[];
+  /** The integration key's Twenty role after the sync (Bee · Integration when the service user is configured) */
+  integrationRole?: { keyId: string; role: string; changed: boolean };
   drift: string[];
   error?: string;
 }
@@ -75,8 +91,23 @@ export class TwentyAccessService {
 
   private readonly sessions = new Map<string, { token: string; until: number }>();
 
+  /** Id of the workspace service key = the `jti` claim of its JWT. */
+  private async keyId(ctx: TenantContext): Promise<string | null> {
+    try {
+      const token = await this.secrets.resolve(ctx.twentyApiTokenRef);
+      const payload = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString('utf8')) as { jti?: string };
+      return payload.jti ?? null;
+    } catch { return null; }
+  }
+
+  /**
+   * Role/app/settings operations run as the Bee service user when one is configured (Twenty refuses several of them
+   * to API keys, and the key is deliberately NOT an administrator); otherwise as the workspace key.
+   */
   private async gql<T = any>(ctx: TenantContext, query: string, variables: Record<string, unknown> = {}, bearer?: string): Promise<T> {
-    const res = await this.client.request(ctx, { method: 'POST', path: '/metadata', body: { query, variables }, bearer });
+    let token = bearer;
+    if (!token) token = (await this.serviceSession(ctx).catch(() => null)) ?? undefined;
+    const res = await this.client.request(ctx, { method: 'POST', path: '/metadata', body: { query, variables }, bearer: token });
     if (res?.errors?.length) throw new Error(`Twenty GraphQL: ${String(res.errors[0]?.message ?? 'error').slice(0, 200)}`);
     return res?.data as T;
   }
@@ -107,7 +138,7 @@ export class TwentyAccessService {
   }
 
   private getRoles(ctx: TenantContext): Promise<TwentyRole[]> {
-    return this.gql<{ getRoles: TwentyRole[] }>(ctx, `{ getRoles { id label isEditable canReadAllObjectRecords canUpdateAllObjectRecords canSoftDeleteAllObjectRecords canDestroyAllObjectRecords canUpdateAllSettings canAccessAllTools canBeAssignedToUsers workspaceMembers { id userEmail } permissionFlags { flag } } }`).then((d) => d.getRoles);
+    return this.gql<{ getRoles: TwentyRole[] }>(ctx, `{ getRoles { id label isEditable canReadAllObjectRecords canUpdateAllObjectRecords canSoftDeleteAllObjectRecords canDestroyAllObjectRecords canUpdateAllSettings canAccessAllTools canBeAssignedToUsers canBeAssignedToApiKeys workspaceMembers { id userEmail } permissionFlags { flag } } }`).then((d) => d.getRoles);
   }
 
   async sync(ctx: TenantContext, opts: { dryRun?: boolean } = {}): Promise<AccessSyncReport> {
@@ -141,6 +172,41 @@ export class TwentyAccessService {
       const admin = roles.find((r) => r.label === TWENTY_ROLE_LABELS.client_admin && !r.isEditable) ?? byLabel(TWENTY_ROLE_LABELS.client_admin);
       const noAccess = byLabel(TWENTY_ROLE_LABELS.none);
 
+      // 1b. Integration identity: the key gets the dedicated role instead of Admin (only when a session can assign it,
+      //     so a missing/incorrect service user can never lock Bee out of its own workspace).
+      {
+        const { flags, ...ispec } = INTEGRATION_ROLE.spec;
+        let role = byLabel(INTEGRATION_ROLE.label);
+        if (!role && !opts.dryRun) {
+          await this.gql(ctx, `mutation($i: CreateRoleInput!) { createOneRole(createRoleInput: $i) { id } }`, { i: { label: INTEGRATION_ROLE.label, description: INTEGRATION_ROLE.description, icon: 'IconPlugConnected', ...ispec } });
+          report.rolesCreated.push(INTEGRATION_ROLE.label);
+          roles = await this.getRoles(ctx);
+          role = byLabel(INTEGRATION_ROLE.label);
+        } else if (role && Object.entries(ispec).some(([k, v]) => (role as any)[k] !== v)) {
+          report.drift.push(`role "${INTEGRATION_ROLE.label}" permissions differed from Bee's definition`);
+          if (!opts.dryRun) await this.gql(ctx, `mutation($i: UpdateRoleInput!) { updateOneRole(updateRoleInput: $i) { id } }`, { i: { id: role.id, update: { description: INTEGRATION_ROLE.description, ...ispec } } });
+          report.rolesUpdated.push(INTEGRATION_ROLE.label);
+        }
+        if (role) {
+          const have = new Set((role.permissionFlags ?? []).map((f) => f.flag));
+          if (flags.length !== have.size || flags.some((f) => !have.has(f))) {
+            if (!opts.dryRun) await this.gql(ctx, `mutation($i: UpsertPermissionFlagsInput!) { upsertPermissionFlags(upsertPermissionFlagsInput: $i) { id } }`, { i: { roleId: role.id, permissionFlagKeys: flags } });
+          }
+          const session = await this.serviceSession(ctx).catch(() => null);
+          const keyId = await this.keyId(ctx);
+          if (session && keyId) {
+            const keys = await this.gql<{ apiKeys: Array<{ id: string; role: { label: string } | null }> }>(ctx, `{ apiKeys { id role { label } } }`, {}, session);
+            const cur = keys.apiKeys.find((k) => k.id === keyId)?.role?.label ?? null;
+            const changed = cur !== INTEGRATION_ROLE.label;
+            report.integrationRole = { keyId, role: INTEGRATION_ROLE.label, changed };
+            if (changed) {
+              report.drift.push(`integration key had role "${cur ?? 'none'}"`);
+              if (!opts.dryRun) await this.gql(ctx, `mutation($k: UUID!, $r: UUID!) { assignRoleToApiKey(apiKeyId: $k, roleId: $r) }`, { k: keyId, r: role.id }, session);
+            }
+          }
+        }
+      }
+
       // 2. Workspace settings: new joiners get NO access until a client admin links them; no public invite link;
       //    no impersonation (operator access to customer data goes through support grants, §4).
       const ws = await this.gql<{ currentWorkspace: { id: string; defaultRole: { id: string } | null; isPublicInviteLinkEnabled: boolean; allowImpersonation: boolean } }>(ctx, `{ currentWorkspace { id defaultRole { id } isPublicInviteLinkEnabled allowImpersonation } }`);
@@ -168,7 +234,21 @@ export class TwentyAccessService {
 
       // 3. Member → role assignments follow Bee.
       const members = await this.crm.listWorkspaceMembers(ctx);
-      const beeUsers = await this.db.tenantTx(ctx.tenantId, (tx) => tx.select({ id: users.id, role: users.role, status: users.status, member: users.twentyMemberId }).from(users).where(eq(users.tenantId, ctx.tenantId)));
+      const beeUsers = await this.db.tenantTx(ctx.tenantId, (tx) => tx.select({ id: users.id, role: users.role, status: users.status, member: users.twentyMemberId, email: users.email, invitedAt: users.twentyInvitedAt }).from(users).where(eq(users.tenantId, ctx.tenantId)));
+      // A member that accepted OUR invitation (same mailbox, invited by a client admin through Bee) is linked to that user.
+      const linkedIds = new Set(beeUsers.map((u) => u.member).filter(Boolean));
+      for (const u of beeUsers) {
+        if (u.member || !u.invitedAt || u.status !== 'active' || !u.email) continue;
+        const m = members.find((x) => x.email?.toLowerCase() === u.email!.toLowerCase() && !linkedIds.has(x.id));
+        if (!m) continue;
+        report.autoLinked = [...(report.autoLinked ?? []), u.email];
+        if (opts.dryRun) continue;
+        await this.db.tenantTx(ctx.tenantId, async (tx) => {
+          await tx.update(users).set({ twentyMemberId: m.id, updatedAt: new Date() }).where(eq(users.id, u.id));
+          await this.audit.writeTx(tx, { tenantId: ctx.tenantId, userId: u.id, action: 'user.member_linked', resourceType: 'user', resourceId: u.id, metadata: { actor: 'system:invitation-accepted', memberId: m.id } });
+        });
+        u.member = m.id; linkedIds.add(m.id);
+      }
       const currentRole = (memberId: string) => roles.find((r) => r.workspaceMembers?.some((m) => m.id === memberId)) ?? null;
       const linkedActiveAdmins = beeUsers.filter((u) => u.role === 'client_admin' && u.status === 'active' && u.member && members.some((m) => m.id === u.member));
       let adminSeats = members.filter((m) => currentRole(m.id)?.id === admin?.id).length;
@@ -181,8 +261,8 @@ export class TwentyAccessService {
         const desiredLabel = u && u.status === 'active' && isTenantRole(u.role) ? TWENTY_ROLE_LABELS[u.role] : TWENTY_ROLE_LABELS.none;
         const desired = desiredLabel === TWENTY_ROLE_LABELS.client_admin ? admin : byLabel(desiredLabel);
         const cur = currentRole(m.id);
-        if (!desired || cur?.id === desired.id) continue;
         if (!u) report.drift.push(`${m.email ?? m.id} is a Twenty member without a linked Bee user`);
+        if (!desired || cur?.id === desired.id) continue;
         if (cur?.id === admin?.id) {
           // Never lock the workspace out: keep the last Admin, and keep unlinked Admins until a client admin is linked.
           if (adminSeats <= 1) { report.drift.push(`${m.email ?? m.id} keeps Admin: it is the last Admin seat`); continue; }
@@ -206,6 +286,28 @@ export class TwentyAccessService {
       this.log.warn({ tenantId: ctx.tenantId, err: report.error }, 'twenty access sync failed');
     }
     return report;
+  }
+
+  /**
+   * Invite an employee's e-mail into the Twenty workspace (Twenty e-mails them a personal link). They join as
+   * "Bee · No access" until Bee links them to their user; the admin's invitation is what attests the mailbox.
+   */
+  async inviteMember(ctx: TenantContext, email: string): Promise<{ sent: boolean; error?: string }> {
+    try {
+      const session = await this.serviceSession(ctx);
+      if (!session) return { sent: false, error: "Bee's Twenty service user is not configured for this workspace." };
+      const roles = await this.getRoles(ctx);
+      const noAccess = roles.find((r) => r.label === TWENTY_ROLE_LABELS.none);
+      const r = await this.gql<{ sendInvitations: { success: boolean; errors: string[] } }>(
+        ctx,
+        `mutation($e: [String!]!, $r: UUID) { sendInvitations(emails: $e, roleId: $r) { success errors } }`,
+        { e: [email], r: noAccess?.id ?? null },
+        session,
+      );
+      return r.sendInvitations.success ? { sent: true } : { sent: false, error: r.sendInvitations.errors.join('; ') || 'Twenty did not send the invitation.' };
+    } catch (e) {
+      return { sent: false, error: (e as Error).message };
+    }
   }
 
   /** Tenant secret + Bee URL for the CRM Bee app installed in the workspace (skipped when the app is absent). */
