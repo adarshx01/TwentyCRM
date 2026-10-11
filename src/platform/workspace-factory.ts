@@ -51,12 +51,12 @@ export class TwentyWorkspaceFactory implements WorkspaceFactory {
     return u.replace(/\/$/, '');
   }
 
-  private async call<T = any>(host: string, query: string, variables: Record<string, unknown> = {}, token?: string): Promise<T> {
+  private async call<T = any>(host: string, query: string, variables: Record<string, unknown> = {}, token?: string, connectTo?: string): Promise<T> {
     // Retry connection failures: Twenty may be restarting, or a brand-new workspace address is still getting its certificate.
     let res: Response | undefined;
     for (let attempt = 0; ; attempt++) {
       try {
-        res = await this.fetchFn(`${host}/metadata`, {
+        res = await this.fetchFn(`${connectTo ?? host}/metadata`, {
           method: 'POST',
           headers: { 'content-type': 'application/json', origin: host, ...(token ? { authorization: `Bearer ${token}` } : {}) },
           body: JSON.stringify({ query, variables }),
@@ -100,9 +100,11 @@ export class TwentyWorkspaceFactory implements WorkspaceFactory {
 
   async subdomainTaken(subdomain: string): Promise<boolean> {
     // An unknown subdomain answers "Workspace not found"; an existing one answers with a credentials error instead.
+    // Asked through the instance's base address with the candidate address as Origin, so no certificate is needed for a
+    // name that does not exist yet.
     const host = this.hostFor(subdomain);
     try {
-      await this.call(host, `mutation($o:String!){ getLoginTokenFromCredentials(email:"nobody@invalid.example",password:"x",origin:$o){ loginToken{token} } }`, { o: host });
+      await this.call(host, `mutation($o:String!){ getLoginTokenFromCredentials(email:"nobody@invalid.example",password:"x",origin:$o){ loginToken{token} } }`, { o: host }, undefined, this.base);
       return true;
     } catch (e) {
       return !/workspace not found/i.test((e as Error).message);
