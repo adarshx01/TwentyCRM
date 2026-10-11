@@ -199,6 +199,7 @@ describe('platform plane: operators create and run companies (§1, §4, TEN-05)'
     const ask = async (d: string) => (await inject({ method: 'GET', url: `/internal/tls-ask?domain=${encodeURIComponent(d)}` })).statusCode;
     expect(await ask('app.test')).toBe(200);          // the Twenty base host
     expect(await ask('ylogx.test')).toBe(200);        // the operations workspace
+    expect(await ask('test')).toBe(404);              // (single label is never a host)
     expect(await ask('acme-foods.test')).toBe(200);   // a company created through the console
     expect(await ask('unknown.test')).toBe(404);
     expect(await ask('evil.example.org')).toBe(404);

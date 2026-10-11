@@ -40,7 +40,9 @@ export class PlatformService {
     const p = this.config.platform;
     const base = hostOf(p.twentyUrl);
     if (!base) return false;
-    if (host === base || host === hostOf(p.workspaceUrl)) return true;
+    // Twenty builds some links (file uploads, e-mailed links) from its bare base domain, i.e. the platform host without "app.".
+    const apex = base.split('.').slice(1).join('.');
+    if (host === base || host === apex || host === hostOf(p.workspaceUrl)) return true;
     const rows = await this.db.db.select({ u: tenants.twentyBaseUrl }).from(tenants);
     if (rows.some((r) => hostOf(r.u) === host)) return true;
     // Creating a workspace: Twenty first hands out a generated address, which must be reachable over HTTPS to finish the
