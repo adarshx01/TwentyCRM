@@ -10,7 +10,12 @@ wrong in the earlier code, **[change]** implemented by this work (all **[change]
 **Decisions taken (2026-10-07):** A1 = *Bee-only* screens for salespeople and managers (no Organization key; Twenty's
 row-level code is commercially licensed, so it is neither unlocked nor re-implemented inside Twenty); A2 = client admin
 has administration **plus** CXO record rights; multi-workspace mode on AWS = *later*; platform operators = *internal ops
-workspace* (built on the operator API below; the console needs a second workspace, i.e. the multi-workspace switch).
+workspace*.
+
+**Update (2026-10-12):** the platform plane is built and verified locally: one shared multi-workspace Twenty, one
+isolated workspace per company created from the **Platform console** in the YlogX operations workspace, named operators,
+encrypted vault, platform audit trail, support grants. See [platform-plane.md](platform-plane.md) (including the manual
+test procedure). AWS still runs a single workspace.
 
 ---
 

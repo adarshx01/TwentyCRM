@@ -90,6 +90,32 @@ export class TwentyAccessService {
   ) {}
 
   private readonly sessions = new Map<string, { token: string; until: number }>();
+  private readonly adoptionChecked = new Map<string, number>();
+
+  /**
+   * A person who just accepted the invitation a client admin sent through Bee is linked right away (same mailbox, invited
+   * by Bee), instead of waiting for the next reconciliation. Returns true when the member is now linked.
+   */
+  async adoptAcceptedInvitation(ctx: TenantContext, memberId: string): Promise<boolean> {
+    const key = `${ctx.tenantId}:${memberId}`;
+    const now = Date.now();
+    if ((this.adoptionChecked.get(key) ?? 0) > now - 15_000) return false;
+    this.adoptionChecked.set(key, now);
+    if (this.adoptionChecked.size > 5000) this.adoptionChecked.clear();
+    const members = await this.crm.listWorkspaceMembers(ctx).catch(() => []);
+    const member = members.find((m) => m.id === memberId);
+    if (!member?.email) return false;
+    const rows = await this.db.tenantTx(ctx.tenantId, (tx) => tx.select({ id: users.id, member: users.twentyMemberId, email: users.email, invitedAt: users.twentyInvitedAt, status: users.status }).from(users).where(eq(users.tenantId, ctx.tenantId)));
+    if (rows.some((u) => u.member === memberId)) return true;
+    const u = rows.find((x) => !x.member && !!x.invitedAt && x.status === 'active' && x.email?.toLowerCase() === member.email!.toLowerCase());
+    if (!u) return false;
+    await this.db.tenantTx(ctx.tenantId, async (tx) => {
+      await tx.update(users).set({ twentyMemberId: memberId, updatedAt: new Date() }).where(eq(users.id, u.id));
+      await this.audit.writeTx(tx, { tenantId: ctx.tenantId, userId: u.id, action: 'user.member_linked', resourceType: 'user', resourceId: u.id, metadata: { actor: 'system:invitation-accepted', memberId } });
+    });
+    void this.sync(ctx).catch((e) => this.log.warn({ tenantId: ctx.tenantId, err: (e as Error).message }, 'role sync after invitation failed'));
+    return true;
+  }
 
   /** Id of the workspace service key = the `jti` claim of its JWT. */
   private async keyId(ctx: TenantContext): Promise<string | null> {
@@ -322,6 +348,24 @@ export class TwentyAccessService {
       return { configured: true };
     } catch (e) {
       return { configured: false, reason: (e as Error).message };
+    }
+  }
+
+  /** Move this workspace's CRM Bee app to the newest version published on the Twenty instance (Twenty's upgradeApplication). */
+  async upgradeApp(ctx: TenantContext): Promise<{ upgraded: boolean; from?: string; to?: string; reason?: string }> {
+    try {
+      const apps = await this.gql<{ findManyApplications: Array<{ id: string; name: string; version: string | null; universalIdentifier: string; applicationRegistrationId: string | null }> }>(ctx, `{ findManyApplications { id name version universalIdentifier applicationRegistrationId } }`);
+      const app = apps.findManyApplications.find((a) => a.name === 'CRM Bee');
+      if (!app?.applicationRegistrationId) return { upgraded: false, reason: 'CRM Bee is not installed from the instance registry in this workspace' };
+      // The registration belongs to the platform workspace, so it is found by its universal identifier, not listed.
+      const reg = await this.gql<{ findApplicationRegistrationByUniversalIdentifier: { id: string; latestAvailableVersion: string | null } | null }>(ctx, `query($u: String!) { findApplicationRegistrationByUniversalIdentifier(universalIdentifier: $u) { id latestAvailableVersion } }`, { u: app.universalIdentifier });
+      const latest = reg.findApplicationRegistrationByUniversalIdentifier?.latestAvailableVersion;
+      if (!latest) return { upgraded: false, reason: 'No published version found' };
+      if (latest === app.version) return { upgraded: false, from: app.version, to: latest, reason: 'Already up to date' };
+      await this.gql(ctx, `mutation($r: String!, $v: String!) { upgradeApplication(appRegistrationId: $r, targetVersion: $v) }`, { r: app.applicationRegistrationId, v: latest });
+      return { upgraded: true, from: app.version ?? undefined, to: latest };
+    } catch (e) {
+      return { upgraded: false, reason: (e as Error).message };
     }
   }
 }

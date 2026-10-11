@@ -166,11 +166,16 @@ describe('access control: roles, tenant admin, Twenty app, operators (§4, AT-01
 
   describe('platform operators and support access (§4)', () => {
     let opKey = '';
-    it('only the bootstrap key creates named operators; operators are not tenant users', async () => {
+    it('the bootstrap key creates the first operator, operators add colleagues (audited) but cannot revoke themselves; operators are not tenant users', async () => {
       const r = await inject({ method: 'POST', url: '/admin/operators', headers: { 'x-api-key': ADMIN_KEY }, payload: { name: 'Olu Ops', email: 'olu@ylogx.test' } });
       expect(r.statusCode).toBe(201);
       opKey = r.json().key;
-      expect((await inject({ method: 'POST', url: '/admin/operators', headers: { 'x-api-key': opKey }, payload: { name: 'X', email: 'x@ylogx.test' } })).statusCode).toBe(403);
+      const olu = r.json().id;
+      // A named operator adds a colleague (the Platform console does the same); the key never doubles as a tenant credential.
+      const col = await inject({ method: 'POST', url: '/admin/operators', headers: { 'x-api-key': opKey }, payload: { name: 'Pia Ops', email: 'pia@ylogx.test' } });
+      expect(col.statusCode).toBe(201);
+      expect((await inject({ method: 'POST', url: `/admin/operators/${olu}/revoke`, headers: { 'x-api-key': opKey } })).statusCode).toBe(403);
+      expect((await inject({ method: 'POST', url: `/admin/operators/${col.json().id}/revoke`, headers: { 'x-api-key': opKey } })).statusCode).toBeLessThan(300);
       expect((await inject({ method: 'GET', url: '/v1/me', headers: { 'x-api-key': opKey } })).statusCode).toBe(401);
     });
 

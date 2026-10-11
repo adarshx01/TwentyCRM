@@ -45,6 +45,7 @@ export function testConfig(db: TestDb, twentyUrl: string, storageDir: string, ov
     dev: { channel: false },
     web: { token: 'test-crm-chat-token-0123456789abcdef' },
     security: { jwtSecret: JWT_SECRET, adminApiKey: ADMIN_KEY },
+    platform: { appUniversalId: '9b650bfb-85fc-478d-961a-a40ee10235dc' },
     retention: { draftExpirySeconds: 1800, mediaCleanupHours: 24, mediaRetentionDays: 30, auditRetentionDays: 365, logRetentionDays: 30 },
     ...over,
   };
@@ -65,7 +66,7 @@ export interface TestEnv {
   close(): Promise<void>;
 }
 
-export interface EnvOptions { workers?: boolean; config?: Partial<AppConfig>; twentyRateLimit?: number }
+export interface EnvOptions { workers?: boolean; config?: Partial<AppConfig>; twentyRateLimit?: number; providers?: Array<{ token: any; value: unknown }> }
 
 /** Full application against a real Postgres clone and fake external systems. */
 export async function createTestEnv(opts: EnvOptions = {}): Promise<TestEnv> {
@@ -83,7 +84,9 @@ export async function createTestEnv(opts: EnvOptions = {}): Promise<TestEnv> {
   const media = new FakeMediaFetcher();
   const mailbox: { list: (...a: any[]) => Promise<any[]> } = { list: async () => [] };
 
-  const mod = await Test.createTestingModule({ imports: [AppModule] })
+  let builder = Test.createTestingModule({ imports: [AppModule] });
+  for (const p of opts.providers ?? []) builder = builder.overrideProvider(p.token).useValue(p.value);
+  const mod = await builder
     .overrideProvider(APP_CONFIG).useValue(config)
     .overrideProvider(EXTRACTION_PROVIDER).useValue(extraction)
     .overrideProvider(CHANNEL_SENDERS).useValue({ whatsapp, teams })

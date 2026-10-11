@@ -5,6 +5,8 @@ import type { FastifyRequest } from 'fastify';
 import { APP_CONFIG, type AppConfig } from '../../config/configuration';
 import { IdentityService } from '../../identity/identity.service';
 import { TenantService } from '../../tenant/tenant.service';
+import { PlatformService } from '../../platform/platform.service';
+import { TwentyAccessService } from '../../crm/twenty/twenty-access.service';
 import { OperatorService, type OperatorPrincipal } from '../../access/operator.service';
 import { ALLOW_UNLINKED_KEY, IS_TWENTY_APP_KEY } from '../../access/decorators';
 import { safeEqual, tenantAppSecret } from '../../access/app-secret';
@@ -20,7 +22,7 @@ export interface Actor { tenant: TenantContext; user: UserContext }
 /** The Twenty member behind a Twenty-app call (set even when the member is not linked yet). */
 export interface TwentyCaller { tenant: TenantContext; workspaceId: string; memberId: string; linked: boolean }
 
-type Req = FastifyRequest & { token?: TokenPayload; actor?: Actor; operator?: OperatorPrincipal; twenty?: TwentyCaller; user?: unknown };
+type Req = FastifyRequest & { token?: TokenPayload; actor?: Actor; operator?: OperatorPrincipal; twenty?: TwentyCaller; platform?: { memberId: string; linked: boolean }; user?: unknown };
 
 const WS_HEADER = 'x-bee-workspace';
 const MEMBER_HEADER = 'x-bee-member';
@@ -92,6 +94,9 @@ export class ActorGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly identity: IdentityService,
     private readonly tenants: TenantService,
+    private readonly operators: OperatorService,
+    private readonly access: TwentyAccessService,
+    private readonly platform: PlatformService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -122,12 +127,27 @@ export class ActorGuard implements CanActivate {
     const memberId = String(req.headers[MEMBER_HEADER] ?? '');
     const bearer = (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '');
     if (!UUIDISH.test(workspaceId) || !UUIDISH.test(memberId) || !bearer) throw new UnauthorizedException('Missing Twenty caller');
+
+    // The YlogX operations workspace: callers are platform operators (linked members), never tenant users.
+    if (this.config.platform?.workspaceId && workspaceId === this.config.platform.workspaceId) {
+      if (!safeEqual(bearer, tenantAppSecret(master, 'platform'))) {
+        M.webhookAuthFailures().inc({ channel: 'twenty-app', reason: 'platform-secret' });
+        throw new UnauthorizedException('Invalid app credentials');
+      }
+      let operator = await this.operators.findByMember(memberId);
+      if (!operator && (await this.platform.adoptOperator(memberId).catch(() => false))) operator = await this.operators.findByMember(memberId);
+      req.platform = { memberId, linked: !!operator };
+      if (operator) { req.operator = operator; return true; }
+      if (this.reflector.getAllAndOverride<boolean>(ALLOW_UNLINKED_KEY, [ctx.getHandler(), ctx.getClass()])) return true;
+      throw new ForbiddenException('Your account is not a platform operator. Ask an existing operator to add you.');
+    }
     const tenant = await this.tenants.findByWorkspace(workspaceId);
     if (!tenant || !safeEqual(bearer, tenantAppSecret(master, tenant.tenantId))) {
       M.webhookAuthFailures().inc({ channel: 'twenty-app', reason: 'secret' });
       throw new UnauthorizedException('Invalid app credentials');
     }
-    const live = await this.identity.resolveTwentyMember(tenant.tenantId, memberId);
+    let live = await this.identity.resolveTwentyMember(tenant.tenantId, memberId);
+    if (!live && (await this.access.adoptAcceptedInvitation(tenant, memberId).catch(() => false))) live = await this.identity.resolveTwentyMember(tenant.tenantId, memberId);
     req.twenty = { tenant, workspaceId, memberId, linked: !!live };
     if (live) { this.attach(req, live); return true; }
     // Unlinked members may only ask who they are (the page then says "ask your admin to link you").

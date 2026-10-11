@@ -7,6 +7,7 @@ import { Approvals } from './bee/approvals';
 import { Security, Settings, Teams } from './bee/admin-other';
 import { MyBee } from './bee/my-bee';
 import { Users } from './bee/users';
+import { PlatformConsole } from './bee/platform';
 import { C, Notice, useLoad } from './bee/ui';
 
 type Tab = { id: string; label: string; show: boolean; render: () => JSX.Element };
@@ -22,6 +23,17 @@ const BeePage = () => {
   if (me.loading && !me.data) return <main style={{ padding: 24 }}><div style={C.muted}>Loading Bee…</div></main>;
   if (me.error) return <main style={{ padding: 24 }}><Notice tone="error">{me.error}</Notice></main>;
   const m = me.data!;
+  if (m.platform) {
+    if (!m.linked) return <main style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}><div style={{ fontWeight: 600, fontSize: 16 }}>YlogX Platform</div><Notice tone="info">{m.message}</Notice></main>;
+    return (
+      <main style={{ boxSizing: 'border-box', display: 'grid', gridTemplateRows: 'auto minmax(0,1fr)', height: '100%', width: '100%', overflow: 'hidden' }}>
+        <header style={{ padding: '12px 16px', borderBottom: C.border }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}><div style={{ fontWeight: 600 }}>YlogX Platform</div><div style={C.muted}>{m.operator.name} · Platform operator</div></div>
+        </header>
+        <section style={{ overflowY: 'auto', padding: 16 }}><PlatformConsole /></section>
+      </main>
+    );
+  }
   if (!m.linked) {
     return (
       <main style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>

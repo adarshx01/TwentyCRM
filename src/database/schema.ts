@@ -635,9 +635,47 @@ export const platformOperators = pgTable('platform_operators', {
   keyHash: varchar('key_hash', { length: 64 }).notNull().unique(),
   status: varchar('status', { length: 20 }).notNull().default('active'),
   createdBy: varchar('created_by', { length: 255 }).notNull(),
+  /** The operator's member in the platform (ops) Twenty workspace: how they sign in to the platform console */
+  twentyMemberId: varchar('twenty_member_id', { length: 255 }),
+  invitedAt: ts('invited_at'),
   lastUsedAt: ts('last_used_at'),
   createdAt: createdAt(),
   revokedAt: ts('revoked_at'),
+});
+
+/** Encrypted credentials created by Bee itself (workspace keys, service-user passwords), referenced as db:<name>. */
+export const secretVault = pgTable('secret_vault', {
+  name: varchar('name', { length: 255 }).primaryKey(),
+  ciphertext: text('ciphertext').notNull(),
+  keyVersion: integer('key_version').notNull().default(1),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+/** Company creation progress (resumable). */
+export const companyProvisioning = pgTable('company_provisioning', {
+  slug: varchar('slug', { length: 63 }).primaryKey(),
+  state: varchar('state', { length: 20 }).$type<'running' | 'failed' | 'ready'>().notNull().default('running'),
+  request: jsonb('request').$type<Record<string, unknown>>().notNull(),
+  progress: jsonb('progress').$type<Record<string, unknown>>().notNull().default({}),
+  error: text('error'),
+  tenantId: uuid('tenant_id'),
+  createdBy: varchar('created_by', { length: 255 }).notNull(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+/** What platform operators did (append-only). Tenant-visible events are ALSO written to that tenant's audit trail. */
+export const platformAuditLog = pgTable('platform_audit_log', {
+  id: bigint('id', { mode: 'number' }).primaryKey().generatedAlwaysAsIdentity(),
+  at: ts('at').defaultNow().notNull(),
+  operatorId: varchar('operator_id', { length: 64 }).notNull(),
+  operatorName: varchar('operator_name', { length: 255 }).notNull(),
+  action: varchar('action', { length: 100 }).notNull(),
+  tenantId: uuid('tenant_id'),
+  target: varchar('target', { length: 255 }),
+  result: varchar('result', { length: 20 }).notNull().default('success'),
+  metadata: jsonb('metadata'),
 });
 
 /**

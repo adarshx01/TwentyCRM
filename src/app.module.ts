@@ -6,6 +6,12 @@ import { DatabaseModule } from './database/database.module';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
 import { ActorGuard, AuthGuard } from './common/guards/auth.guard';
 import { DefaultSecretResolver, SECRET_RESOLVER } from './secrets/secret-resolver';
+import { SecretVault } from './secrets/secret-vault';
+import { PlatformAuditService } from './platform/platform-audit.service';
+import { PlatformService } from './platform/platform.service';
+import { CompanyProvisioner } from './platform/company-provisioner.service';
+import { PlatformController } from './platform/platform.controller';
+import { TwentyWorkspaceFactory, WORKSPACE_FACTORY } from './platform/workspace-factory';
 import { LIMITER_BACKEND, MemoryLimiterBackend, RedisLimiterBackend } from './ratelimit/limiter';
 import { WorkspaceLimiter } from './ratelimit/workspace-limiter';
 import { QueueService } from './queue/queue.service';
@@ -70,7 +76,7 @@ import { HealthController } from './health/health.controller';
 /** Infrastructure providers (replaceable in tests by overriding the tokens). */
 const infra: Provider[] = [
   { provide: FETCH_FN, useValue: fetch },
-  { provide: SECRET_RESOLVER, useFactory: () => new DefaultSecretResolver() },
+  { provide: SECRET_RESOLVER, useFactory: (vault: SecretVault) => new DefaultSecretResolver(fetch, process.env, 5 * 60_000, vault), inject: [SecretVault] },
   { provide: LIMITER_BACKEND, useFactory: (c: AppConfig) => (c.redis.url.startsWith('memory:') ? new MemoryLimiterBackend() : new RedisLimiterBackend(c.redis.url)), inject: [APP_CONFIG] },
   { provide: STORAGE, useFactory: (c: AppConfig) => createStorage(c), inject: [APP_CONFIG] },
   { provide: SCANNER, useFactory: (c: AppConfig) => createScanner(c), inject: [APP_CONFIG] },
@@ -99,6 +105,8 @@ const domain: Provider[] = [
   SchedulePlanner, DigestService, SchedulerService, InboundService, IntakeService, AssignmentService, GraphMailboxProvider, MailboxPoller,
   MaintenanceService, TenantProvisioningService, WorkersService,
   OperatorService, UserDirectoryService, ArchiveRequestService, TenantConfigService, TwentyAccessService,
+  SecretVault, PlatformAuditService, PlatformService, CompanyProvisioner,
+  { provide: WORKSPACE_FACTORY, useClass: TwentyWorkspaceFactory },
 ];
 
 @Global()
@@ -107,7 +115,7 @@ class CoreModule {}
 
 @Module({
   imports: [ConfigModule, DatabaseModule, CoreModule],
-  controllers: [WebhooksController, ApiController, AdminController, IntakeWebhookController, HealthController, DevController, WebChatController, MeController, ApprovalsController, TenantAdminController],
+  controllers: [WebhooksController, ApiController, AdminController, IntakeWebhookController, HealthController, DevController, WebChatController, MeController, ApprovalsController, TenantAdminController, PlatformController],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_GUARD, useClass: AuthGuard },

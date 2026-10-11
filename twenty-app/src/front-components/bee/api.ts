@@ -23,15 +23,20 @@ export type Permission =
   | 'tenant.users.manage' | 'tenant.teams.manage' | 'tenant.enrollment.manage' | 'tenant.config.manage'
   | 'tenant.audit.read' | 'tenant.support.approve' | 'tenant.usage.read';
 
-export type Me =
-  | { linked: false; message: string }
-  | {
+export type TenantMe = {
+      platform?: undefined;
       linked: true;
       tenant: { slug: string; timezone: string };
       user: { id: string; displayName: string; email: string | null; role: string; roleLabel: string; teamId: string | null; managedTeamIds: string[]; timezone: string; morningReminderTime: string; preferredReminderChannel: string | null; channels: Array<{ channel: string; status: string; enrolledAt: string }> };
       scope: 'own' | 'team' | 'all';
       permissions: Permission[];
     };
+
+export type Me =
+  | { platform: true; linked: false; message: string }
+  | { platform: true; linked: true; operator: { id: string; name: string } }
+  | { linked: false; message: string; platform?: undefined }
+  | TenantMe;
 
 export type DirUser = { id: string; displayName: string; email: string | null; role: string; teamId: string | null; managedTeamIds: string[]; status: string; twentyMemberId: string | null; invitedAt: string | null; preferredReminderChannel: string | null; channels: Array<{ channel: string; status: string }> };
 export type Member = { id: string; name: string; email: string | null; linkedUserId: string | null; suggestedUserId: string | null };
@@ -47,3 +52,10 @@ export type CreatedUser = DirUser & { invitation: { sent: boolean; error?: strin
 
 export type OpenDraft = { id: string; version: number; hash: string; kind: string; text: string; expiresAt: string | null };
 export type OperationView = { id: string; reference: string; state: string; saved: string[]; pending: string[]; failed: string[]; refs: Array<{ kind: string; label: string; url?: string }>; error?: string };
+
+export type Company = { id: string; slug: string; name: string; status: string; configVersion: number; timezone: string; currency: string; workspaceUrl: string | null; users: { active: number; revoked: number }; openDeadLetters: number; pendingSupportRequests: number; lastReconciledAt: string | null; reconciliationError: string | null; createdAt: string };
+export type CompanyDetail = { id: string; slug: string; name: string; status: string; configVersion: number; workspaceId: string; workspaceUrl: string | null; timezone: string; currency: string; morningReminderTime: string; workingDays: number[]; pipeline: Array<{ id: string; label: string; terminal?: string }>; serviceUser: string | null; users: Array<{ id: string; name: string; email: string | null; role: string; status: string; team: string | null; linked: boolean; invited: boolean }>; usage30d: Array<{ kind: string; total: number; events: number }>; openDeadLetters: number; supportGrants: Array<{ id: string; reason: string; hours: number; state: string; createdAt: string; expiresAt: string | null; operator: string | null }> };
+export type Provisioning = { slug: string; state: 'running' | 'failed' | 'ready'; error: string | null; name?: string; request: Record<string, unknown>; steps: string[]; workspaceUrl: string | null; invitation: { sent: boolean; error?: string } | null; updatedAt: string; tenantId: string | null };
+export type PlatformHealth = { companyCreation: boolean; missing: string[]; workspaceUrl: string | null };
+export type OperatorRow = { id: string; name: string; email: string; status: string; signedIn: boolean; invited: boolean; lastUsedAt: string | null; createdAt: string };
+export type PlatformAuditRow = { id: number; at: string; operator: string; action: string; target: string | null; result: string; metadata: Record<string, unknown> | null };

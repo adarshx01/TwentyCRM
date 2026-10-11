@@ -63,3 +63,4 @@ infra/twenty/.env
 .state.json
 .admin-password
 infra/twenty-b/.env
+infra/twenty-m/.env

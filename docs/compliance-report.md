@@ -42,7 +42,8 @@ Design: `docs/access-architecture.md`. Evidence:
 | Support access only with client approval, time-boxed, audited | PASSED | `access-control.spec` operators |
 | Revocation / role change takes effect immediately; drafts and reminders stop | PASSED | `access-control.spec`, `identity-provisioning.spec`, `twenty-access.spec` |
 | Multiple memberships (workspace selection, separate sessions) | PASSED | `identity-provisioning.spec` |
-| Single Twenty instance in multi-workspace mode with subdomains | UNTESTED | Deferred by decision; isolation proven with separate instances instead |
+| Single Twenty instance in multi-workspace mode with subdomains | PASSED (local) | `scripts/verify/platform.mjs` 20/20 on one multi-workspace Twenty (`infra/twenty-m`); AWS not migrated yet — see `docs/platform-plane.md` |
+| Platform operators provision companies from a console; no customer data without a client-approved grant | PASSED (local) | Platform console in the YlogX operations workspace; `platform.mjs` P-10…P-19; `platform-plane.spec` |
 | Twenty row-level permissions for salesperson/manager screens | BLOCKED | Needs an Organization licence key; decision: those roles are Bee-only (no record screens) |
 
 ## 3. Acceptance scenarios AT-01 … AT-22
@@ -91,6 +92,6 @@ Design: `docs/access-architecture.md`. Evidence:
 4. **REM-04 Teams *channel* destination for digests** — private chat only; the audience-rule notice is not implemented.
 5. **TEN-05 fair scheduling** — quotas and batching exist; the inbound queue itself is FIFO.
 6. **IN-04 optional model extraction for changed templates** — deterministic parser only (changed templates go to review, as the BRD allows).
-7. **Twenty multi-workspace mode on AWS and the operator console workspace** — deferred by decision.
+7. **Twenty multi-workspace mode on AWS** — built and verified locally (`docs/platform-plane.md`); the AWS deployment needs wildcard DNS/TLS and a migration of its existing workspace.
 8. **Outbound SMTP from the developer machine is blocked**; Gmail SMTP is configured for AWS and credentials must be verified there (see deployment notes).
 9. Ask AI cannot be forced to forward a bare "confirm" in a **new** conversation; the Bee page shows and confirms open drafts instead.

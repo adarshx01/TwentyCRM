@@ -22,7 +22,7 @@ import { auditLog, users } from '../database/schema';
 import { UserFacingError } from '../common/errors';
 import { getLogger } from '../observability/logger';
 
-type Req = { actor?: Actor; twenty?: TwentyCaller };
+type Req = { actor?: Actor; twenty?: TwentyCaller; operator?: { id: string; name: string }; platform?: { memberId: string; linked: boolean } };
 const actorOf = (req: Req): Actor => { if (!req.actor) throw new UserFacingError('Sign in first.', 'AUTH_FORBIDDEN'); return req.actor; };
 const tag = (a: Actor) => `user:${a.user.userId}`;
 const log = getLogger('access');
@@ -92,6 +92,8 @@ export class MeController {
 
   @Get() @AllowUnlinkedMember()
   async me(@Req() req: Req) {
+    if (req.operator) return { platform: true, linked: true, operator: { id: req.operator.id, name: req.operator.name } };
+    if (req.platform && !req.platform.linked) return { platform: true, linked: false, message: 'Your account is not a platform operator yet. Ask an existing operator to add you.' };
     if (!req.actor) {
       return { linked: false, workspace: req.twenty ? { name: (req.twenty.tenant as any).tenantSlug } : null, memberId: req.twenty?.memberId ?? null, message: 'Your Twenty account is not linked to a Bee user yet. Ask a client admin to link you in Bee › Administration.' };
     }

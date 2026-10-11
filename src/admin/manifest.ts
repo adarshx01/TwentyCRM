@@ -44,10 +44,10 @@ export const TenantManifestSchema = z.object({
   deploymentId: z.string().default('shared_01'),
   twenty: z.object({
     workspaceId: z.string().min(1), baseUrl: z.string().url().optional(),
-    apiTokenRef: z.string().regex(/^(env|file|gcp-sm):/, 'use a secret reference such as env:NAME or gcp-sm:projects/…'),
-    webhookSecretRef: z.string().regex(/^(env|file|gcp-sm):/).optional(),
+    apiTokenRef: z.string().regex(/^(env|file|gcp-sm|db):/, 'use a secret reference such as env:NAME or gcp-sm:projects/…'),
+    webhookSecretRef: z.string().regex(/^(env|file|gcp-sm|db):/).optional(),
     /** Bee service user (Admin seat) used for member roles and workspace settings, which Twenty refuses to API keys */
-    serviceUser: z.object({ email: z.string().email(), passwordRef: z.string().regex(/^(env|file|gcp-sm):/) }).strict().optional(),
+    serviceUser: z.object({ email: z.string().email(), passwordRef: z.string().regex(/^(env|file|gcp-sm|db):/) }).strict().optional(),
   }).strict(),
   timezone: z.string().default('UTC').refine((z) => { try { new Intl.DateTimeFormat('en', { timeZone: z }); return true; } catch { return false; } }, 'unknown IANA timezone'),
   workingDays: z.array(z.number().int().min(1).max(7)).default([1, 2, 3, 4, 5]),
@@ -58,7 +58,7 @@ export const TenantManifestSchema = z.object({
   /** Required to remove a stage that has active records: stageId → target stageId (CFG-04) */
   stageMigrations: z.record(z.string()).optional(),
   notificationUserEmail: z.string().email().optional(),
-  channels: z.object({ whatsapp: z.object({ accessTokenRef: z.string().regex(/^(env|file|gcp-sm):/) }).strict().optional() }).strict().optional(),
+  channels: z.object({ whatsapp: z.object({ accessTokenRef: z.string().regex(/^(env|file|gcp-sm|db):/) }).strict().optional() }).strict().optional(),
   quotas: z.object({ maxUploadsPerMinute: z.number().optional(), maxRemindersPerMinute: z.number().optional(), maxMessagesPerMinute: z.number().optional(), maxAiJobsInFlight: z.number().optional() }).optional(),
   retention: z.object({ draftExpirySeconds: z.number().optional(), mediaRetentionDays: z.number().optional(), auditRetentionDays: z.number().optional(), rawEmailRetentionDays: z.number().optional(), reviewRetentionDays: z.number().optional() }).optional(),
   /** Teams of the client (CFG-03). Team keys referenced by users are created automatically. */

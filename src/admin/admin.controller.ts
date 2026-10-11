@@ -61,6 +61,15 @@ export class AdminController {
   @Get('operators')
   listOperators() { return this.operators.list(); }
 
+  /** Bootstrap: bind an operator to their member in the platform (operations) workspace so they can use the console. */
+  @Post('operators/:id/link') @HttpCode(200)
+  async linkOperator(@Req() req: OpReq, @Param('id', ParseUUIDPipe) id: string, @Body() body: unknown) {
+    if (req.operator.kind !== 'bootstrap') throw new UserFacingError('Only the bootstrap key can link operators directly.', 'OPERATOR_FORBIDDEN');
+    const { memberId } = z.object({ memberId: z.string().min(8).max(64) }).strict().parse(body);
+    await this.operators.linkMember(id, memberId);
+    return { status: 'linked' };
+  }
+
   @Post('operators/:id/revoke') @HttpCode(200)
   async revokeOperator(@Req() req: OpReq, @Param('id', ParseUUIDPipe) id: string) {
     await this.operators.revoke(id, req.operator);

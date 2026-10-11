@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { bee, type ArchiveReq, type Me, type OpenDraft, type OperationView } from './api';
+import { bee, type ArchiveReq, type TenantMe, type OpenDraft, type OperationView } from './api';
 import { Badge, Btn, C, Card, Notice, Pairs, Table, fmt, useAction, useLoad } from './ui';
 
 const SCOPE_TEXT = { own: 'records you own or are assigned', team: 'your records and those of the teams you manage', all: 'every record of the company' } as const;
@@ -47,7 +47,7 @@ const Drafts = () => {
   );
 };
 
-export const MyBee = ({ me }: { me: Extract<Me, { linked: true }> }) => {
+export const MyBee = ({ me }: { me: TenantMe }) => {
   const reqs = useLoad(() => bee<ArchiveReq[]>('GET', '/v1/me/archive-requests'));
   const act = useAction();
   const u = me.user;

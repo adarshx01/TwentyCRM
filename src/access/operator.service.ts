@@ -41,8 +41,25 @@ export class OperatorService {
     return { id: op.id, name: op.name, kind: 'named' };
   }
 
+  /** The operator whose platform-workspace member this is (console sign-in). */
+  async findByMember(memberId: string): Promise<OperatorPrincipal | null> {
+    const [op] = await this.db.systemTx((tx) => tx.select().from(platformOperators).where(and(eq(platformOperators.twentyMemberId, memberId), eq(platformOperators.status, 'active'))));
+    return op ? { id: op.id, name: op.name, kind: 'named' } : null;
+  }
+
+  async linkMember(operatorId: string, memberId: string): Promise<void> {
+    await this.db.systemTx((tx) => tx.update(platformOperators).set({ twentyMemberId: memberId }).where(eq(platformOperators.id, operatorId)));
+  }
+
+  async markInvited(operatorId: string): Promise<void> {
+    await this.db.systemTx((tx) => tx.update(platformOperators).set({ invitedAt: new Date() }).where(eq(platformOperators.id, operatorId)));
+  }
+
+  async listDetailed() {
+    return this.db.systemTx((tx) => tx.select({ id: platformOperators.id, name: platformOperators.name, email: platformOperators.email, status: platformOperators.status, linked: platformOperators.twentyMemberId, invitedAt: platformOperators.invitedAt, lastUsedAt: platformOperators.lastUsedAt, createdAt: platformOperators.createdAt }).from(platformOperators));
+  }
+
   async create(input: { name: string; email: string }, by: OperatorPrincipal): Promise<{ id: string; key: string }> {
-    if (by.kind !== 'bootstrap') throw new UserFacingError('Only the bootstrap key can create operators.', 'OPERATOR_FORBIDDEN');
     const key = `op_${randomBytes(32).toString('base64url')}`;
     const [row] = await this.db.systemTx((tx) => tx.insert(platformOperators).values({ name: input.name, email: input.email.toLowerCase(), keyHash: sha256(key), createdBy: operatorActor(by) }).onConflictDoNothing().returning({ id: platformOperators.id }));
     if (!row) throw new UserFacingError('An operator with this e-mail already exists.', 'OPERATOR_CONFLICT');
@@ -54,7 +71,9 @@ export class OperatorService {
   }
 
   async revoke(id: string, by: OperatorPrincipal): Promise<void> {
-    if (by.kind !== 'bootstrap') throw new UserFacingError('Only the bootstrap key can revoke operators.', 'OPERATOR_FORBIDDEN');
+    if (by.kind === 'named' && by.id === id) throw new UserFacingError('You cannot revoke your own operator access.', 'OPERATOR_FORBIDDEN');
+    const all = await this.db.systemTx((tx) => tx.select({ id: platformOperators.id }).from(platformOperators).where(eq(platformOperators.status, 'active')));
+    if (all.length <= 1 && all[0]?.id === id) throw new UserFacingError('This is the last active operator.', 'OPERATOR_FORBIDDEN');
     await this.db.systemTx((tx) => tx.update(platformOperators).set({ status: 'revoked', revokedAt: new Date() }).where(eq(platformOperators.id, id)));
   }
 

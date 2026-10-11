@@ -106,6 +106,22 @@ export const AppConfigSchema = z.object({
     /** Bee API base URL as reached FROM Twenty's function runner (set as the app's BEE_API_URL at provisioning). */
     appBeeUrl: z.string().url().optional(),
   }),
+  /**
+   * The platform plane: the shared multi-workspace Twenty (BRD §1) and the YlogX operations workspace inside it,
+   * where platform operators sign in to the Platform console. Unset = company creation is disabled.
+   */
+  platform: z.object({
+    workspaceId: z.string().optional(),
+    /** Browser/API URL of the operations workspace, e.g. http://ylogx.localhost:3020 */
+    workspaceUrl: z.string().url().optional(),
+    /** Instance base URL used to sign in/up and create workspaces, e.g. http://app.localhost:3020 */
+    twentyUrl: z.string().url().optional(),
+    /** Server-admin account that creates company workspaces (it is removed from each workspace afterwards) */
+    adminEmail: z.string().email().optional(),
+    adminPasswordRef: z.string().optional(),
+    /** Universal identifier of the CRM Bee app registered on that Twenty */
+    appUniversalId: z.string().default('9b650bfb-85fc-478d-961a-a40ee10235dc'),
+  }),
   agent: z.object({
     /** Python LangChain conversation agent; when set it replaces the direct OpenAI provider */
     url: z.string().url().optional(),
@@ -114,6 +130,8 @@ export const AppConfigSchema = z.object({
   security: z.object({
     jwtSecret: z.string().min(32),
     adminApiKey: z.string().min(32),
+    /** Encrypts credentials Bee creates while provisioning companies (vault `db:` references) */
+    secretsMasterKey: z.string().min(24).optional(),
   }),
   retention: z.object({
     draftExpirySeconds: z.coerce.number().int().default(1800),
@@ -206,10 +224,12 @@ export function loadConfig(): AppConfig {
     },
     dev: { channel: process.env.DEV_CHANNEL },
     web: { token: process.env.CRM_CHAT_TOKEN || undefined, appBeeUrl: process.env.CRM_APP_BEE_URL || undefined },
+    platform: { workspaceId: process.env.PLATFORM_WORKSPACE_ID || undefined, workspaceUrl: process.env.PLATFORM_WORKSPACE_URL || undefined, twentyUrl: process.env.PLATFORM_TWENTY_URL || undefined, adminEmail: process.env.PLATFORM_ADMIN_EMAIL || undefined, adminPasswordRef: process.env.PLATFORM_ADMIN_PASSWORD ? 'env:PLATFORM_ADMIN_PASSWORD' : undefined, appUniversalId: process.env.TWENTY_APP_UNIVERSAL_ID || undefined },
     agent: { url: process.env.AGENT_URL || undefined, token: process.env.AGENT_TOKEN || undefined },
     security: {
       jwtSecret: process.env.JWT_SECRET,
       adminApiKey: process.env.ADMIN_API_KEY,
+      secretsMasterKey: process.env.SECRETS_MASTER_KEY || undefined,
     },
     retention: {
       draftExpirySeconds: process.env.DRAFT_EXPIRY_SECONDS,

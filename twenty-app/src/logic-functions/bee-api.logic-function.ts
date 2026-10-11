@@ -7,7 +7,7 @@ import { createBeeClient } from 'src/lib/bee-client';
 type Call = { method?: string; path?: string; body?: unknown };
 
 // Only these Bee routes can be reached from the page; Bee itself applies the caller's role to each of them.
-const ALLOWED = /^\/v1\/(me|approvals|tenant-admin)(\/[A-Za-z0-9_\-/]*)?(\?[A-Za-z0-9_\-=&.%]*)?$/;
+const ALLOWED = /^\/v1\/(me|approvals|tenant-admin|platform)(\/[A-Za-z0-9_\-/]*)?(\?[A-Za-z0-9_\-=&.%]*)?$/;
 
 const handler = async (event: RoutePayload) => {
   const call = (event.body ?? {}) as Call;
