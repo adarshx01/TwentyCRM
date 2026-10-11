@@ -57,7 +57,7 @@ services:
     restart: always
     ports: ["80:80", "443:443"]
     environment: { CRM_HOST: "${CRM_HOST}", BEE_HOST: "${BEE_HOST}" }
-    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro", "caddy-data:/data", "caddy-config:/config"]
+    volumes: ["/opt/crmbee/Caddyfile:/etc/caddy/Caddyfile:ro", "caddy-data:/data", "caddy-config:/config"]
     networks:
       default:
         aliases: ["${CRM_HOST}"]   # Bee reaches Twenty through its public name (valid TLS) without leaving the host

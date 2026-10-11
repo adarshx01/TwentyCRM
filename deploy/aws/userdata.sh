@@ -20,10 +20,13 @@ S=$(aws secretsmanager get-secret-value --secret-id crmbee/env --query SecretStr
 umask 077
 for f in compose.env bee.env agent.env; do echo "$S" | jq -r --arg f "$f" '.[$f]' > "/opt/crmbee/$f"; done
 cd /opt/crmbee/current/deploy/aws
+# Caddy mounts a file that outlives releases (the release directory is replaced, a bind-mounted file would go stale).
+cp -f Caddyfile /opt/crmbee/Caddyfile
 export RELEASE=$REL
 docker compose --env-file /opt/crmbee/compose.env build
 docker compose --env-file /opt/crmbee/compose.env run --rm --no-deps bee-api node dist/database/migrate.js
 docker compose --env-file /opt/crmbee/compose.env up -d --remove-orphans
+docker compose --env-file /opt/crmbee/compose.env exec -T caddy caddy reload --config /etc/caddy/Caddyfile --force || docker compose --env-file /opt/crmbee/compose.env up -d --force-recreate caddy
 docker image prune -f >/dev/null
 EOS
 chmod +x /opt/crmbee/apply.sh
