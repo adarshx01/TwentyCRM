@@ -12,6 +12,12 @@
 //
 // Twenty has no API to make the first server admin, so the account is promoted with TWENTY_DB_EXEC (a SQL runner for
 // Twenty's database). Prints the environment variables to add to Bee's configuration.
+//
+// On AWS, Bee's admin API and Twenty's database are internal. Set AWS_INSTANCE (and optionally BEE_CONTAINER,
+// TWENTY_DB_CONTAINER) and those two steps run on the instance through SSM; everything else goes to the public URLs:
+//   AWS_INSTANCE=i-… PLATFORM_TWENTY_URL=https://app.<base> PLATFORM_ADMIN_EMAIL=… PLATFORM_ADMIN_PASSWORD=… \
+//   CRM_CHAT_TOKEN=… BEE_APP_API_URL=http://bee-api:3000 TWENTY_INTERNAL_URL=http://mserver:3000 PLATFORM_SUBDOMAIN=ylogx \
+//   node scripts/platform-bootstrap.mjs
 import { createHmac } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import { resolve } from 'node:path';
@@ -21,10 +27,23 @@ const E = process.env;
 const need = (k) => { if (!E[k]) { console.error(`${k} is required`); process.exit(1); } return E[k]; };
 const APP = need('PLATFORM_TWENTY_URL').replace(/\/$/, '');
 const email = need('PLATFORM_ADMIN_EMAIL'), password = need('PLATFORM_ADMIN_PASSWORD');
-const BEE = need('BEE_API').replace(/\/$/, ''), ADMIN = need('ADMIN_API_KEY'), CHAT = need('CRM_CHAT_TOKEN');
+const AWS = E.AWS_INSTANCE;
+const BEE = AWS ? 'ssm' : need('BEE_API').replace(/\/$/, ''), ADMIN = AWS ? '' : need('ADMIN_API_KEY'), CHAT = need('CRM_CHAT_TOKEN');
 const BEE_FOR_APP = E.BEE_APP_API_URL ?? BEE;
 const APP_ID = E.TWENTY_APP_UNIVERSAL_ID ?? '9b650bfb-85fc-478d-961a-a40ee10235dc';
 const SUBDOMAIN = E.PLATFORM_SUBDOMAIN ?? 'ylogx';
+
+// Run a shell script on the AWS instance (SSM) and return its output.
+const onInstance = (script) => {
+  const b64 = Buffer.from(script).toString('base64');
+  const id = execSync(`aws ssm send-command --instance-ids ${AWS} --document-name AWS-RunShellScript --parameters 'commands=["echo ${b64} | base64 -d | bash"]' --query Command.CommandId --output text`, { encoding: 'utf8', env: { ...process.env, AWS_PAGER: '' } }).trim();
+  for (let i = 0; i < 90; i++) {
+    const r = JSON.parse(execSync(`aws ssm get-command-invocation --command-id ${id} --instance-id ${AWS} --output json || true`, { encoding: 'utf8', env: { ...process.env, AWS_PAGER: '' } }) || '{}');
+    if (['Success', 'Failed', 'Cancelled', 'TimedOut'].includes(r.Status)) { if (r.Status !== 'Success') throw new Error(`instance command ${r.Status}: ${r.StandardErrorContent ?? ''}`); return r.StandardOutputContent ?? ''; }
+    execSync('sleep 2');
+  }
+  throw new Error('instance command timed out');
+};
 
 const gql = async (host, query, variables, token) => {
   for (let i = 0; ; i++) {
@@ -57,7 +76,11 @@ const host = ws.workspaceUrls.subdomainUrl.replace(/\/$/, '');
 console.error(`platform workspace: ${ws.id} at ${host}`);
 
 // 2. server admin (needed to create further workspaces)
-if (E.TWENTY_DB_EXEC) {
+const promote = `update core."user" set "canAccessFullAdminPanel"=true, "canImpersonate"=true where email='${email.replace(/'/g, '')}'`;
+if (AWS) {
+  onInstance(`docker exec ${E.TWENTY_DB_CONTAINER ?? 'crmbee-mdb-1'} psql -U postgres -d default -c "$(echo ${Buffer.from(promote).toString('base64')} | base64 -d)"`);
+  console.error('platform account promoted to server admin (on the instance)');
+} else if (E.TWENTY_DB_EXEC) {
   execSync(`${E.TWENTY_DB_EXEC} "update core.\\"user\\" set \\"canAccessFullAdminPanel\\"=true, \\"canImpersonate\\"=true where email='${email.replace(/'/g, '')}'"`, { stdio: 'ignore' });
   console.error('platform account promoted to server admin');
 } else console.error('NOTE: set TWENTY_DB_EXEC to promote the platform account to server admin (required to create company workspaces).');
@@ -105,7 +128,14 @@ if (inst.errors && !/already/i.test(inst.errors[0].message)) throw new Error(`in
 console.error('CRM Bee app registered and installed in the platform workspace');
 
 // 4. first operator in Bee, linked to the platform account's member
-const bee = async (path, body, method = 'POST') => (await fetch(`${BEE}${path}`, { method, headers: { 'x-api-key': ADMIN, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })).json();
+const bee = async (path, body, method = 'POST') => {
+  if (AWS) {
+    // Bee's admin API is internal on AWS: call it from inside the Bee API container with its own admin key.
+    const js = `const a=JSON.parse(Buffer.from('${Buffer.from(JSON.stringify([path, method, body ?? null])).toString('base64')}','base64'));fetch('http://localhost:3000'+a[0],{method:a[1],headers:{'x-api-key':process.env.ADMIN_API_KEY,'content-type':'application/json'},body:a[2]?JSON.stringify(a[2]):undefined}).then(r=>r.text()).then(t=>process.stdout.write(t))`;
+    return JSON.parse(onInstance(`S=$(echo ${Buffer.from(js).toString('base64')} | base64 -d); docker exec ${E.BEE_CONTAINER ?? 'crmbee-bee-api-1'} node -e "$S"`));
+  }
+  return (await fetch(`${BEE}${path}`, { method, headers: { 'x-api-key': ADMIN, 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined })).json();
+};
 const ops = await bee('/admin/operators', undefined, 'GET');
 let op = (Array.isArray(ops) ? ops : []).find((o) => o.email === email.toLowerCase());
 if (!op) { const c = await bee('/admin/operators', { name: E.PLATFORM_OPERATOR_NAME ?? 'Platform admin', email }); op = { id: c.id }; if (c.key) console.error(`operator API key (shown once, for CLI use): ${c.key}`); }

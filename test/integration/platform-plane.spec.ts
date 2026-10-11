@@ -195,6 +195,23 @@ describe('platform plane: operators create and run companies (§1, §4, TEN-05)'
     expect((await call()).json()).toMatchObject({ platform: true, linked: true, operator: { name: 'Quinn Ops' } });
   }, 30_000);
 
+  it('TLS certificates are only approved for names this deployment serves', async () => {
+    const ask = async (d: string) => (await inject({ method: 'GET', url: `/internal/tls-ask?domain=${encodeURIComponent(d)}` })).statusCode;
+    expect(await ask('app.test')).toBe(200);          // the Twenty base host
+    expect(await ask('ylogx.test')).toBe(200);        // the operations workspace
+    expect(await ask('acme-foods.test')).toBe(200);   // a company created through the console
+    expect(await ask('unknown.test')).toBe(404);
+    expect(await ask('evil.example.org')).toBe(404);
+    expect(await ask('')).toBe(404);
+    expect(await ask('a_b.test')).toBe(404);
+    // While a creation is actually running, Twenty's generated address for the new workspace is approved too.
+    await db.systemTx((tx) => tx.insert(companyProvisioning).values({ slug: 'tls-window', request: {} as any, state: 'running', createdBy: 'operator:test' }));
+    expect(await ask('sleepy-otter-1a2b.test')).toBe(200);
+    expect(await ask('evil.example.org')).toBe(404);
+    await db.systemTx((tx) => tx.update(companyProvisioning).set({ state: 'failed' }).where(eq(companyProvisioning.slug, 'tls-window')));
+    expect(await ask('sleepy-otter-1a2b.test')).toBe(404);
+  });
+
   it('a person who accepts the client admin\'s invitation is linked on first use', async () => {
     const acme = (await op('GET', '/v1/platform/companies')).json().find((c: any) => c.slug === 'acme-foods');
     const w = env.twenty.workspaces.get('acme-foods')!;

@@ -10,7 +10,7 @@ import { SecretVault } from './secrets/secret-vault';
 import { PlatformAuditService } from './platform/platform-audit.service';
 import { PlatformService } from './platform/platform.service';
 import { CompanyProvisioner } from './platform/company-provisioner.service';
-import { PlatformController } from './platform/platform.controller';
+import { PlatformController, TlsAskController } from './platform/platform.controller';
 import { TwentyWorkspaceFactory, WORKSPACE_FACTORY } from './platform/workspace-factory';
 import { LIMITER_BACKEND, MemoryLimiterBackend, RedisLimiterBackend } from './ratelimit/limiter';
 import { WorkspaceLimiter } from './ratelimit/workspace-limiter';
@@ -115,7 +115,7 @@ class CoreModule {}
 
 @Module({
   imports: [ConfigModule, DatabaseModule, CoreModule],
-  controllers: [WebhooksController, ApiController, AdminController, IntakeWebhookController, HealthController, DevController, WebChatController, MeController, ApprovalsController, TenantAdminController, PlatformController],
+  controllers: [WebhooksController, ApiController, AdminController, IntakeWebhookController, HealthController, DevController, WebChatController, MeController, ApprovalsController, TenantAdminController, PlatformController, TlsAskController],
   providers: [
     { provide: APP_FILTER, useClass: GlobalExceptionFilter },
     { provide: APP_GUARD, useClass: AuthGuard },

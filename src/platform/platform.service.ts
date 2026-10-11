@@ -2,7 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { and, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { APP_CONFIG, type AppConfig } from '../config/configuration';
 import { DbService } from '../database/db.service';
-import { deadLetters, reconciliationState, supportGrants, tenants, usageEvents, users } from '../database/schema';
+import { companyProvisioning, deadLetters, reconciliationState, supportGrants, tenants, usageEvents, users } from '../database/schema';
 import { AuditService } from '../audit/audit.service';
 import { TenantService } from '../tenant/tenant.service';
 import { TwentyAccessService } from '../crm/twenty/twenty-access.service';
@@ -28,6 +28,38 @@ export class PlatformService {
     @Inject(WORKSPACE_FACTORY) private readonly factory: WorkspaceFactory,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
+
+  /**
+   * Caddy asks before it requests a certificate for a host name (on-demand TLS): only names this deployment really serves
+   * may get one, so nobody can make the server issue certificates for arbitrary names pointed at its address.
+   */
+  async tlsAllowed(domain: string): Promise<boolean> {
+    const hostOf = (u?: string | null) => { try { return u ? new URL(u).hostname.toLowerCase() : null; } catch { return null; } };
+    const host = domain.trim().toLowerCase();
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9-]+)+$/.test(host)) return false;
+    const p = this.config.platform;
+    const base = hostOf(p.twentyUrl);
+    if (!base) return false;
+    if (host === base || host === hostOf(p.workspaceUrl)) return true;
+    const rows = await this.db.db.select({ u: tenants.twentyBaseUrl }).from(tenants);
+    if (rows.some((r) => hostOf(r.u) === host)) return true;
+    // Creating a workspace: Twenty first hands out a generated address, which must be reachable over HTTPS to finish the
+    // set-up. That is allowed only while the platform plane is being set up, or while a creation is actually running.
+    const sameBase = host.split('.').slice(1).join('.') === base.split('.').slice(1).join('.');
+    if (sameBase && !p.workspaceId) return true;
+    if (sameBase) {
+      const recent = new Date(Date.now() - 10 * 60_000);
+      const [running] = await this.db.systemTx((tx) => tx.select({ slug: companyProvisioning.slug }).from(companyProvisioning).where(and(eq(companyProvisioning.state, 'running'), sql`${companyProvisioning.updatedAt} > ${recent.toISOString()}::timestamptz`)).limit(1));
+      if (running) return true;
+    }
+    // A company being created: its address is <slug>.<same base as the platform host>.
+    const label = host.split('.')[0];
+    if (host === `${label}.${base.split('.').slice(1).join('.')}`) {
+      const [pending] = await this.db.systemTx((tx) => tx.select({ slug: companyProvisioning.slug }).from(companyProvisioning).where(eq(companyProvisioning.slug, label)));
+      if (pending) return true;
+    }
+    return false;
+  }
 
   /** What this deployment can do (shown at the top of the console). */
   health() {

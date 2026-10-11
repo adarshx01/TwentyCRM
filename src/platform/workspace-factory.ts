@@ -52,12 +52,24 @@ export class TwentyWorkspaceFactory implements WorkspaceFactory {
   }
 
   private async call<T = any>(host: string, query: string, variables: Record<string, unknown> = {}, token?: string): Promise<T> {
-    const res = await this.fetchFn(`${host}/metadata`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', origin: host, ...(token ? { authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ query, variables }),
-      signal: AbortSignal.timeout(30_000),
-    });
+    // Retry connection failures: Twenty may be restarting, or a brand-new workspace address is still getting its certificate.
+    let res: Response | undefined;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        res = await this.fetchFn(`${host}/metadata`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', origin: host, ...(token ? { authorization: `Bearer ${token}` } : {}) },
+          body: JSON.stringify({ query, variables }),
+          signal: AbortSignal.timeout(30_000),
+        });
+        if (res.status !== 502 && res.status !== 503 && res.status !== 504) break;
+      } catch (e) {
+        if (attempt >= 7) throw new TwentyError(`Twenty is not reachable at ${host}: ${(e as Error).message}`);
+      }
+      if (attempt >= 7) break;
+      await new Promise((r) => setTimeout(r, 4000));
+    }
+    if (!res) throw new TwentyError(`Twenty is not reachable at ${host}`);
     const j = (await res.json()) as { data?: T; errors?: Array<{ message: string }> };
     if (j.errors?.length) throw new TwentyError(j.errors[0].message);
     return j.data as T;
@@ -107,7 +119,23 @@ export class TwentyWorkspaceFactory implements WorkspaceFactory {
     // Public subdomain = the company's slug.
     await this.call(host, `mutation($d: UpdateWorkspaceInput!){ updateWorkspace(data:$d){ id } }`, { d: { subdomain: input.subdomain } }, token);
     host = host.replace(/\/\/[^.]+\./, `//${input.subdomain}.`);
+    await this.warmUp(host);
     return { workspaceId: created.id, url: host, subdomain: input.subdomain };
+  }
+
+  /**
+   * Ask for the workspace address once so its certificate (issued on demand by the front proxy) is ready before people
+   * and Bee's runtime calls arrive. Best effort: provisioning does not depend on it.
+   */
+  private async warmUp(host: string): Promise<void> {
+    if (!host.startsWith('https://')) return;
+    for (let i = 0; i < 12; i++) {
+      try {
+        const r = await this.fetchFn(`${host}/healthz`, { signal: AbortSignal.timeout(15_000) });
+        if (r.ok) return;
+      } catch { /* certificate still being issued */ }
+      await new Promise((r) => setTimeout(r, 5000));
+    }
   }
 
   async createApiKey(ws: CreatedWorkspace): Promise<string> {

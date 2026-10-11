@@ -1,3 +1,11 @@
+# Company workspaces are <name>.<base>: certificates are issued on demand, and only for names Bee says it serves
+# (the ask endpoint is reachable on the internal network only).
+{
+	on_demand_tls {
+		ask http://bee-api:3000/internal/tls-ask
+	}
+}
+
 # Automatic HTTPS (Let's Encrypt). CRM_HOST / BEE_HOST are <elastic-ip-with-dashes>.sslip.io names.
 {$CRM_HOST} {
 	encode zstd gzip
@@ -13,4 +21,14 @@
 	handle {
 		respond "not found" 404
 	}
+}
+
+# The platform plane: Twenty in multi-workspace mode (app.<base>, the operations workspace and every company).
+# Named sites above win over this catch-all.
+https:// {
+	tls {
+		on_demand
+	}
+	encode zstd gzip
+	reverse_proxy mserver:3000
 }

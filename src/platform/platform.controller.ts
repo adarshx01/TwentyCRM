@@ -1,6 +1,6 @@
 import { Body, Controller, ForbiddenException, Get, HttpCode, Param, ParseUUIDPipe, Post, Query, Req } from '@nestjs/common';
 import { z } from 'zod';
-import { TwentyApp } from '../common/decorators';
+import { Public, TwentyApp } from '../common/decorators';
 import type { OperatorPrincipal } from '../access/operator.service';
 import { UserFacingError } from '../common/errors';
 import { CompanyProvisioner } from './company-provisioner.service';
@@ -69,4 +69,16 @@ export class PlatformController {
 
   @Get('audit')
   platformAudit(@Req() req: Req, @Query('limit') limit?: string) { opOf(req); return this.platform.recentAudit(Number(limit) || 100); }
+}
+
+/** Used by the TLS front (Caddy on-demand certificates) over the internal network only; it is not exposed publicly. */
+@Controller('internal')
+export class TlsAskController {
+  constructor(private readonly platform: PlatformService) {}
+
+  @Public() @Get('tls-ask')
+  async ask(@Query('domain') domain?: string) {
+    if (!domain || !(await this.platform.tlsAllowed(domain))) throw new UserFacingError('Unknown host.', 'NOT_FOUND');
+    return { allowed: true };
+  }
 }
