@@ -29,7 +29,8 @@ x-twenty-env: &twenty-env
   EMAIL_FROM_NAME: ${EMAIL_FROM_NAME:-CRM Bee}
 
 # The platform plane (docs/platform-plane.md): a second Twenty in multi-workspace mode. The operations workspace and every
-# company workspace the Platform console creates live on it, at <name>.<base> (base = the host of M_HOST without "app.").
+# company workspace the Platform console creates live on it, at <name>.<M_HOST>; M_HOST is the BASE domain (Twenty puts
+# its own "app." in front of it): SERVER_URL=https://<M_HOST>, operations workspace ylogx.<M_HOST>.
 x-mtwenty-env: &mtwenty-env
   PG_DATABASE_URL: postgres://postgres:${M_PG_PASSWORD}@mdb:5432/default
   SERVER_URL: https://${M_HOST}

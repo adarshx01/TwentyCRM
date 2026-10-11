@@ -32,6 +32,7 @@ const BEE = AWS ? 'ssm' : need('BEE_API').replace(/\/$/, ''), ADMIN = AWS ? '' :
 const BEE_FOR_APP = E.BEE_APP_API_URL ?? BEE;
 const APP_ID = E.TWENTY_APP_UNIVERSAL_ID ?? '9b650bfb-85fc-478d-961a-a40ee10235dc';
 const SUBDOMAIN = E.PLATFORM_SUBDOMAIN ?? 'ylogx';
+const REMOTE = E.PLATFORM_REMOTE ?? 'platform';
 
 // Run a shell script on the AWS instance (SSM) and return its output.
 const onInstance = (script) => {
@@ -114,8 +115,8 @@ const keyId = must(await gql(host, `mutation($i:CreateApiKeyInput!){ createApiKe
 const deployKey = must(await gql(host, `mutation($id:UUID!,$e:String!){ generateApiKeyToken(apiKeyId:$id,expiresAt:$e){ token } }`, { id: keyId, e: exp }, token), 'key token').generateApiKeyToken.token;
 const appDir = resolve(fileURLToPath(new URL('../twenty-app', import.meta.url)));
 const sh = (c) => execSync(c, { cwd: appDir, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' });
-sh(`npx twenty remote:add --url ${host} --api-key ${deployKey} --as platform`);
-sh('npx twenty remote:use platform');
+sh(`npx twenty remote:add --url ${host} --api-key ${deployKey} --as ${REMOTE}`);
+sh(`npx twenty remote:use ${REMOTE}`);
 try {
   console.error(sh('npx twenty app:publish --private').split('\n').filter((l) => /Published|rror/.test(l)).join('\n'));
 } catch (e) {
