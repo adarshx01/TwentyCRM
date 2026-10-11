@@ -232,7 +232,11 @@ export class CompanyProvisioner {
       await this.audit.write(operator, 'company.created', { tenantId: p.tenantId, target: req.slug, metadata: { workspaceUrl: ws.url, adminEmail: req.adminEmail, invitationSent: !!p.invited?.sent } });
       return { state: 'ready', tenantId: p.tenantId!, slug: req.slug, workspaceUrl: ws.url, adminEmail: req.adminEmail, invitation: p.invited ?? { sent: false }, access: null, steps: p.steps.map((s) => s.step) };
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      let message = e instanceof Error ? e.message : String(e);
+      // Twenty's licence: a server without an Organization (enterprise) key may hold at most 5 workspaces, the operations
+      // workspace included. Say so plainly instead of surfacing the raw error.
+      const cap = /Cannot create more than (\d+) workspaces/i.exec(message);
+      if (cap) message = `this Twenty server is at its limit of ${cap[1]} workspaces (the operations workspace counts as one). More companies need a Twenty Organization key (ENTERPRISE_KEY) on the server, or an existing company must be removed first.`;
       await this.save(req.slug, { state: 'failed', error: `${current}: ${message}`.slice(0, 1000), progress: p as unknown as Record<string, unknown> });
       await this.audit.write(operator, 'company.create_failed', { target: req.slug, result: 'failure', metadata: { step: current, message: message.slice(0, 300) } });
       throw new UserFacingError(`Creating "${req.slug}" stopped at "${current}": ${message}. Fix the cause and submit again — completed steps are kept.`, 'PROVISION_FAILED');

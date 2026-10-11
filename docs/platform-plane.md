@@ -98,11 +98,36 @@ create yourself. Use two browser profiles (or a private window) so sessions don'
 Automated version of the above: `set -a; . ./.env.local; set +a; node scripts/verify/platform.mjs` (20 checks, ~3 min
 the first time because it creates two companies).
 
-## AWS
+## Limit: five workspaces without a Twenty Organization key
 
-The AWS deployment still runs a single-workspace Twenty. Multi-workspace there needs a wildcard host name with TLS
-(for example `*.crm.<domain>` → the Caddy front, on-demand certificates), `IS_MULTIWORKSPACE_ENABLED=true`, the platform
-bootstrap, and migrating the existing workspace into a company. Nothing in Bee changes; it is infrastructure work.
+Twenty refuses to create more than **5 workspaces per server** unless the server has a valid Organization (enterprise)
+key (`ENTERPRISE_KEY`). The operations workspace counts as one, so a free server holds **4 companies**. The console
+reports this as "this Twenty server is at its limit". Options: obtain a Twenty Organization key, or run another
+multi-workspace Twenty (a second `mserver` stack) and point a second platform plane at it. Bee does not work around the
+licence check.
+
+## AWS (deployed 2026-10-12)
+
+| What | Address |
+|---|---|
+| Operations workspace (Platform console) | `https://ylogx.3-6-13-47.sslip.io` → **Bee** |
+| Company workspaces | `https://<company>.3-6-13-47.sslip.io` |
+| Existing single-workspace Twenty (company `aws-demo`) | `https://crm.3-6-13-47.sslip.io` (unchanged) |
+
+A second Twenty (`mserver`/`mworker`/`mdb`/`mredis` in `deploy/aws/docker-compose.yml`, `IS_MULTIWORKSPACE_ENABLED`)
+runs beside the original one. Caddy issues certificates **on demand** for company hosts and asks Bee first
+(`/internal/tls-ask`, internal network only), so only names Bee serves get certificates. Invitations go out by SMTP.
+
+* Secrets: `crmbee/env` in AWS Secrets Manager (`compose.env`: `M_*`; `bee.env`: `SECRETS_MASTER_KEY`, `PLATFORM_*`).
+  The platform sign-in password is `PLATFORM_ADMIN_PASSWORD` there:
+  `aws secretsmanager get-secret-value --secret-id crmbee/env --query SecretString --output text | jq -r '."bee.env"' | grep PLATFORM_ADMIN_PASSWORD`
+* Bootstrap (done once, idempotent) from a workstation with AWS access:
+  `AWS_INSTANCE=<id> PLATFORM_TWENTY_URL=https://app.<base> PLATFORM_ADMIN_EMAIL=… PLATFORM_ADMIN_PASSWORD=… CRM_CHAT_TOKEN=… PLATFORM_SUBDOMAIN=ylogx PLATFORM_REMOTE=aws-platform BEE_APP_API_URL=http://bee-api:3000 TWENTY_INTERNAL_URL=http://mserver:3000 node scripts/platform-bootstrap.mjs`
+  then add the printed `PLATFORM_WORKSPACE_ID` to `bee.env` and release (this also closes the certificate window used
+  during bootstrap).
+* Twenty's `SERVER_URL` is the **base domain** (`https://3-6-13-47.sslip.io`); Twenty puts `app.` in front itself.
+* Headroom: the instance (t3.large, 8 GB) runs both Twenty stacks plus Bee; consider t3.xlarge before adding many
+  active companies.
 
 ## Code map
 
