@@ -121,6 +121,8 @@ export const AppConfigSchema = z.object({
     adminPasswordRef: z.string().optional(),
     /** Universal identifier of the CRM Bee app registered on that Twenty */
     appUniversalId: z.string().default('9b650bfb-85fc-478d-961a-a40ee10235dc'),
+    /** How the CRM Bee app's functions (running inside Twenty) reach the Twenty server, e.g. http://mserver:3000 */
+    internalUrl: z.string().url().optional(),
   }),
   agent: z.object({
     /** Python LangChain conversation agent; when set it replaces the direct OpenAI provider */
@@ -224,7 +226,7 @@ export function loadConfig(): AppConfig {
     },
     dev: { channel: process.env.DEV_CHANNEL },
     web: { token: process.env.CRM_CHAT_TOKEN || undefined, appBeeUrl: process.env.CRM_APP_BEE_URL || undefined },
-    platform: { workspaceId: process.env.PLATFORM_WORKSPACE_ID || undefined, workspaceUrl: process.env.PLATFORM_WORKSPACE_URL || undefined, twentyUrl: process.env.PLATFORM_TWENTY_URL || undefined, adminEmail: process.env.PLATFORM_ADMIN_EMAIL || undefined, adminPasswordRef: process.env.PLATFORM_ADMIN_PASSWORD ? 'env:PLATFORM_ADMIN_PASSWORD' : undefined, appUniversalId: process.env.TWENTY_APP_UNIVERSAL_ID || undefined },
+    platform: { workspaceId: process.env.PLATFORM_WORKSPACE_ID || undefined, workspaceUrl: process.env.PLATFORM_WORKSPACE_URL || undefined, twentyUrl: process.env.PLATFORM_TWENTY_URL || undefined, adminEmail: process.env.PLATFORM_ADMIN_EMAIL || undefined, adminPasswordRef: process.env.PLATFORM_ADMIN_PASSWORD ? 'env:PLATFORM_ADMIN_PASSWORD' : undefined, appUniversalId: process.env.TWENTY_APP_UNIVERSAL_ID || undefined, internalUrl: process.env.TWENTY_INTERNAL_URL || undefined },
     agent: { url: process.env.AGENT_URL || undefined, token: process.env.AGENT_TOKEN || undefined },
     security: {
       jwtSecret: process.env.JWT_SECRET,

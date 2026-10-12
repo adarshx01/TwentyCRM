@@ -342,7 +342,12 @@ export class TwentyAccessService {
       const apps = await this.gql<{ findManyApplications: Array<{ id: string; name: string }> }>(ctx, `{ findManyApplications { id name } }`);
       const app = apps.findManyApplications.find((a) => a.name === 'CRM Bee');
       if (!app) return { configured: false, reason: 'CRM Bee app is not installed in this workspace' };
-      for (const [k, v] of Object.entries(vars)) {
+      // Only workspaces on the platform's multi-workspace Twenty use its internal address (other tenants keep theirs).
+      const host = (u?: string) => { try { return u ? new URL(u).hostname : ''; } catch { return ''; } };
+      const platformBase = host(this.config.platform?.twentyUrl).split('.').slice(1).join('.');
+      const onPlatform = !!platformBase && (host(ctx.twentyBaseUrl) === platformBase || host(ctx.twentyBaseUrl).endsWith(`.${platformBase}`));
+      const internal = onPlatform ? this.config.platform?.internalUrl : undefined;
+      for (const [k, v] of Object.entries({ ...(internal ? { TWENTY_INTERNAL_URL: internal } : {}), ...vars })) {
         await this.gql(ctx, `mutation($k: String!, $v: String!, $a: UUID) { updateOneApplicationVariable(key: $k, value: $v, applicationId: $a) }`, { k, v, a: app.id });
       }
       return { configured: true };
